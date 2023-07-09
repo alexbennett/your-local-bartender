@@ -245,7 +245,7 @@ class Bartender(commands.Bot):
 
         if os.name == "nt":
             audio = discord.FFmpegPCMAudio(
-                executable="c:/ffmpeg/bin/ffmpeg.exe", source=source
+                executable="c:/ffmpeg/bin/ffmpeg.exe", source=source, options="-af \"atempo=1.3\" pipe:1"
             )
         elif os.name == "posix":
             audio = discord.FFmpegPCMAudio(executable="ffmpeg", source=source)
