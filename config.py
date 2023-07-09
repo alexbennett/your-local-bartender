@@ -8,7 +8,7 @@ import openai
 __location__ = os.path.realpath(os.path.join(os.getcwd(), os.path.dirname(__file__)))
 
 
-DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN", "MTEyMDU1MDMxOTU1OTAyNDY4MA.GmBZcB.hEDx7ttMcr_wyLnDW3HxNrSKa8Gv3OE0xfNuR0")
+DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 
 OPENAI_ORG_ID = os.getenv("OPENAI_ORGANIZATION_ID", "org-jwUj8CfIZaPBmhb0rRIyZL82")
 OPENAI_API_KEY = os.getenv(
