@@ -10,10 +10,8 @@ __location__ = os.path.realpath(os.path.join(os.getcwd(), os.path.dirname(__file
 
 DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 
-OPENAI_ORG_ID = os.getenv("OPENAI_ORGANIZATION_ID", "org-jwUj8CfIZaPBmhb0rRIyZL82")
-OPENAI_API_KEY = os.getenv(
-    "OPENAI_API_KEY", "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"
-)
+OPENAI_ORG_ID = os.getenv("OPENAI_ORGANIZATION_ID")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 OPENAI_MODEL = "gpt-3.5-turbo"
 
 ENABLE_SPEECH = True
