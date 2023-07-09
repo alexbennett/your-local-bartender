@@ -10,80 +10,16 @@ import discord
 from discord.ext import commands
 
 import config
-
-CONFIG_CHANNEL = "𝐭𝐡𝐞 𝐜𝐨𝐮𝐜𝐡"
+import utilities
 
 COMMAND_PREFIX = ">"
 COMMANDS_PIC = ">pic"
 COMMANDS_BARTENDER = ">bartender"
 COMMANDS_SAY = ">say"
 COMMANDS_LISTEN = ">listen"
+COMMANDS_PROG = ">prog"
 COMMANDS_PLAY = ">play"
 COMMANDS_CLEAR = ">clear"
-
-
-def download_images(image_urls, directory):
-    """
-    Downloads images from a list of URLs and saves them to a specified directory.
-
-    Args:
-        image_urls (List[str]): List of image URLs.
-        directory (str): Directory path to save the downloaded images.
-
-    Returns:
-        List[str]: List of paths to the downloaded images.
-    """
-    os.makedirs(directory, exist_ok=True)
-    imgs = []
-
-    for i, url in enumerate(image_urls):
-        response = requests.get(url)
-        image_path = os.path.join(
-            directory,
-            f"image{i+1}_{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}.jpg",
-        )
-
-        with open(image_path, "wb") as file:
-            file.write(response.content)
-
-        print(f"Image {i+1} downloaded: {image_path}")
-
-        imgs.append(image_path)
-
-    return imgs
-
-
-def call_image_generation_api(prompt, n=1, size="512x512"):
-    """
-    Calls the OpenAI API to generate images based on a prompt.
-
-    Args:
-        prompt (str): Prompt for generating the images.
-        n (int, optional): Number of images to generate. Defaults to 1.
-        size (str, optional): Size of the generated images. Defaults to "512x512".
-
-    Returns:
-        List[str]: List of URLs for the generated images.
-    """
-    # Create the request body
-    data = {"prompt": prompt, "n": n, "size": size}
-
-    # Set up headers
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {config.OPENAI_API_KEY}",
-    }
-
-    # Send the request to generate images
-    response = requests.post(
-        "https://api.openai.com/v1/images/generations", headers=headers, json=data
-    )
-    response_json = response.json()
-
-    # Extract the generated image URLs from the response
-    image_urls = [result["url"] for result in response_json["data"]]
-
-    return image_urls
 
 
 class Bartender(commands.Bot):
@@ -103,8 +39,103 @@ class Bartender(commands.Bot):
         """
         super().__init__(command_prefix=command_prefix, intents=intents)
         self._messages = []
+        self._programs = []
         self._guild = None
         self._voice_client = None
+
+    async def prog(self, message, respond=True, remember=True, recall=True):
+        """
+        Bartender listens to a phrase, generates a program, and potentially plays a TTS audio response in the voice channel.
+
+        Args:
+            message (discord.Message): Discord message instance representing the listen command.
+            respond (bool, optional): If True, the bot will generate a TTS audio response and play it in the voice channel. Defaults to True.
+            remember (bool, optional): If True, the bot will commit the phrase and response to its memory to maintain conversational context. Defaults to True.
+            recall (bool, optional): If True, the bot will prepend all messages from its memory to the response request. Defaults to True.
+        """
+        phrase = message.content[len(COMMANDS_LISTEN) + 1 :]
+
+        print(
+            f"Listening to program request: '{phrase}' - Respond? {respond} Remember? {remember} Recall? {recall}"
+        )
+
+        # Build message queue
+        messages = [
+            {
+                "role": "system",
+                "content": config.RESPONSE_PROMPT_2,
+            },
+        ]
+
+        # Load previous conversation into message queue
+        if recall:
+            messages.extend(self._programs)
+
+        # Remember phrase
+        if remember:
+            await message.add_reaction("🧠")
+            self._programs.append(dict(role="user", content=phrase))
+
+        # Add new message to queue
+        messages.append({"role": "user", "content": phrase})
+
+        # Get response from OpenAI
+        await message.add_reaction("🤔")
+
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {config.OPENAI_API_KEY}",
+            },
+            json={"model": config.OPENAI_MODEL, "messages": messages, "temperature": 0.5},
+        )
+
+        # print(f"OpenAI API response: {json.dumps(response.json(), indent=2)}")
+
+        generated_response = response.json()["choices"][0]["message"]["content"].strip()
+
+        await message.clear_reaction("🤔")
+        await message.reply(generated_response)
+
+        # Remember generated phrase
+        if remember:
+            self._programs.append({"role": "assistant", "content": generated_response})
+
+        if respond:
+            pass
+            # await message.add_reaction("🔍")
+
+            # # Build NEW message queue
+            # messages = [
+            #     {
+            #         "role": "system",
+            #         "content": config.RESPONSE_PROMPT_3,
+            #     },
+            # ]
+
+            # response = requests.post(
+            #     "https://api.openai.com/v1/chat/completions",
+            #     headers={
+            #         "Content-Type": "application/json",
+            #         "Authorization": f"Bearer {config.OPENAI_API_KEY}",
+            #     },
+            #     json={"model": config.OPENAI_MODEL, "messages": messages, "temperature": 0.5},
+            # )
+
+            # generated_response = response.json()["choices"][0]["message"]["content"].strip()
+
+            # tts = gTTS(text=generated_response, lang="en", tld="ie")
+            # tts.save("audio.mp3")
+
+            # await message.clear_reaction("🔍")
+            # await message.add_reaction("🗣️")
+            # await message.reply(generated_response)
+            # await self.play_file("./audio.mp3")
+
+        await message.add_reaction("✅")
+
+        print(f"🧠 Bartender program memory dump:\n{json.dumps(self._programs, indent=2)}")
 
     async def listen(self, message, respond=True, remember=True, recall=True):
         """
@@ -163,14 +194,13 @@ class Bartender(commands.Bot):
             generated_response = (
                 response.json()["choices"][0]["message"]["content"]
                 .strip()
-                .replace("`", "")
             )
 
             # Remember generated phrase
             if remember:
-                self._messages.append({"role": "system", "content": generated_response})
+                self._messages.append({"role": "assistant", "content": generated_response})
 
-            tts = gTTS(text=generated_response, lang="en", tld="com.au")
+            tts = gTTS(text=generated_response, lang="en", tld="ie")
             tts.save("audio.mp3")
 
             await message.reply(generated_response)
@@ -189,14 +219,14 @@ class Bartender(commands.Bot):
         """
         await message.add_reaction("🤔")
 
-        image_urls = call_image_generation_api(
-            message.content[len(COMMANDS_PIC) :], n=1, size="512x512"
+        image_urls = utilities.call_image_generation_api(
+            message.content[len(COMMANDS_PIC):], n=1, size="512x512"
         )
 
         await message.clear_reaction("🤔")
         await message.add_reaction("⏬")
 
-        imgs = download_images(image_urls, "generated_images")
+        imgs = utilities.download_images(image_urls, "generated_images")
 
         await message.clear_reaction("⏬")
 
@@ -216,7 +246,7 @@ class Bartender(commands.Bot):
 
         print(f'Generating TTS audio for: "{message.content[len(COMMANDS_SAY):]}"')
 
-        tts = gTTS(text=message.content[4:], lang="en", tld="com.au")
+        tts = gTTS(text=message.content[4:], lang="en", tld=config.GTTS_TLD)
         tts.save("audio.mp3")
 
         await message.clear_reaction("🤔")
@@ -235,7 +265,7 @@ class Bartender(commands.Bot):
         """
         # Connect voice client to the "bartender" channel
         self._guild = self.guilds[0]  # Assuming the bot is only in one guild
-        channel = discord.utils.get(self._guild.voice_channels, name=CONFIG_CHANNEL)
+        channel = discord.utils.get(self._guild.voice_channels, name=config.DISCORD_DEFAULT_CHANNEL)
 
         # Handle (re)connection
         if self._voice_client and self._voice_client.is_connected():
@@ -248,7 +278,7 @@ class Bartender(commands.Bot):
                 executable="c:/ffmpeg/bin/ffmpeg.exe", source=source, options="-af \"atempo=1.3\" pipe:1"
             )
         elif os.name == "posix":
-            audio = discord.FFmpegPCMAudio(executable="ffmpeg", source=source)
+            audio = discord.FFmpegPCMAudio(executable="ffmpeg", source=source, options="-af \"atempo=1.3\"")
 
         # Play the audio file using FFmpeg
         self._voice_client.play(audio)
@@ -312,6 +342,14 @@ class Bartender(commands.Bot):
                 await message.add_reaction("❌")
                 print(traceback.format_exc())
                 print("Unable to listen")
+        elif message.content.startswith(COMMANDS_PROG):
+            print(f"Handling PROG")
+            try:
+                await self.prog(message, respond=True, remember=True, recall=True)
+            except:
+                await message.add_reaction("❌")
+                print(traceback.format_exc())
+                print("Unable to prog")
         elif message.content.startswith(COMMANDS_PIC):
             print(f"Handling PIC")
             try:
