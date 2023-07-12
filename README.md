@@ -43,7 +43,7 @@ To set up and run the Bartender Discord Bot, follow these steps:
 
    - `CONFIG_CHANNEL`: The name of the Discord voice channel where the bot will join.
    - `COMMAND_PREFIX`: The prefix for bot commands.
-   - `COMMANDS_PIC`, `COMMANDS_BARTENDER`, `COMMANDS_SAY`, `COMMANDS_LISTEN`, `COMMANDS_PLAY`, `COMMANDS_CLEAR`: The command strings for different bot functionalities.
+   - `COMMANDS_PIC`, `COMMANDS_BARTENDER`, `COMMANDS_SAY`, `COMMANDS_READ`, `COMMANDS_PLAY`, `COMMANDS_CLEAR`: The command strings for different bot functionalities.
 
 6. Run the `bartender.py` file using the following command:
 

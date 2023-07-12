@@ -16,8 +16,8 @@ COMMAND_PREFIX = ">"
 COMMANDS_PIC = ">pic"
 COMMANDS_BARTENDER = ">bartender"
 COMMANDS_SAY = ">say"
-COMMANDS_LISTEN = ">listen"
-COMMANDS_PROG = ">prog"
+COMMANDS_READ = ">read"
+COMMANDS_PROG = ">py"
 COMMANDS_PLAY = ">play"
 COMMANDS_CLEAR = ">clear"
 
@@ -45,15 +45,15 @@ class Bartender(commands.Bot):
 
     async def prog(self, message, respond=True, remember=True, recall=True):
         """
-        Bartender listens to a phrase, generates a program, and potentially plays a TTS audio response in the voice channel.
+        Bartender reads the prompt, generates a program, and potentially plays a TTS audio response in the voice channel.
 
         Args:
-            message (discord.Message): Discord message instance representing the listen command.
+            message (discord.Message): Discord message instance representing the prog command.
             respond (bool, optional): If True, the bot will generate a TTS audio response and play it in the voice channel. Defaults to True.
             remember (bool, optional): If True, the bot will commit the phrase and response to its memory to maintain conversational context. Defaults to True.
             recall (bool, optional): If True, the bot will prepend all messages from its memory to the response request. Defaults to True.
         """
-        phrase = message.content[len(COMMANDS_LISTEN) + 1 :]
+        phrase = message.content[len(COMMANDS_READ) + 1 :]
 
         print(
             f"Listening to program request: '{phrase}' - Respond? {respond} Remember? {remember} Recall? {recall}"
@@ -104,50 +104,22 @@ class Bartender(commands.Bot):
 
         if respond:
             pass
-            # await message.add_reaction("🔍")
-
-            # # Build NEW message queue
-            # messages = [
-            #     {
-            #         "role": "system",
-            #         "content": config.RESPONSE_PROMPT_3,
-            #     },
-            # ]
-
-            # response = requests.post(
-            #     "https://api.openai.com/v1/chat/completions",
-            #     headers={
-            #         "Content-Type": "application/json",
-            #         "Authorization": f"Bearer {config.OPENAI_API_KEY}",
-            #     },
-            #     json={"model": config.OPENAI_MODEL, "messages": messages, "temperature": 0.5},
-            # )
-
-            # generated_response = response.json()["choices"][0]["message"]["content"].strip()
-
-            # tts = gTTS(text=generated_response, lang="en", tld="ie")
-            # tts.save("audio.mp3")
-
-            # await message.clear_reaction("🔍")
-            # await message.add_reaction("🗣️")
-            # await message.reply(generated_response)
-            # await self.play_file("./audio.mp3")
-
+           
         await message.add_reaction("✅")
 
         print(f"🧠 Bartender program memory dump:\n{json.dumps(self._programs, indent=2)}")
 
-    async def listen(self, message, respond=True, remember=True, recall=True):
+    async def read(self, message, respond=True, remember=True, recall=True):
         """
-        Bartender listens to a phrase, generates a response, and potentially plays a TTS audio response in the voice channel.
+        Bartender reads the phrase, generates a response, and potentially plays a TTS audio response in the voice channel.
 
         Args:
-            message (discord.Message): Discord message instance representing the listen command.
+            message (discord.Message): Discord message instance representing the read command.
             respond (bool, optional): If True, the bot will generate a TTS audio response and play it in the voice channel. Defaults to True.
             remember (bool, optional): If True, the bot will commit the phrase and response to its memory to maintain conversational context. Defaults to True.
             recall (bool, optional): If True, the bot will prepend all messages from its memory to the response request. Defaults to True.
         """
-        phrase = message.content[len(COMMANDS_LISTEN) + 1 :]
+        phrase = message.content[len(COMMANDS_READ) + 1 :]
 
         print(
             f"Listening to phrase: '{phrase}' - Respond? {respond} Remember? {remember} Recall? {recall}"
@@ -275,7 +247,7 @@ class Bartender(commands.Bot):
 
         if os.name == "nt":
             audio = discord.FFmpegPCMAudio(
-                executable="c:/ffmpeg/bin/ffmpeg.exe", source=source, options="-af \"atempo=1.3\" pipe:1"
+                executable="c:/ffmpeg/bin/ffmpeg.exe", source=source, options="-af \"atempo=1.3\""
             )
         elif os.name == "posix":
             audio = discord.FFmpegPCMAudio(executable="ffmpeg", source=source, options="-af \"atempo=1.3\"")
@@ -318,15 +290,7 @@ class Bartender(commands.Bot):
         Args:
             message (discord.Message): The received message.
         """
-        if message.content.startswith(COMMANDS_BARTENDER):
-            print("Handling BARTENDER")
-            try:
-                await self.bartender(message)
-            except:
-                await message.add_reaction("❌")
-                print(traceback.format_exc())
-                print("Unable to bartend")
-        elif message.content.startswith(COMMANDS_SAY):
+        if message.content.startswith(COMMANDS_SAY):
             print(f"Handling SAY")
             try:
                 await self.say(message)
@@ -334,14 +298,14 @@ class Bartender(commands.Bot):
                 await message.add_reaction("❌")
                 print(traceback.format_exc())
                 print("Unable to speak")
-        elif message.content.startswith(COMMANDS_LISTEN):
-            print(f"Handling LISTEN")
+        elif message.content.startswith(COMMANDS_READ):
+            print(f"Handling READ")
             try:
-                await self.listen(message, respond=True, remember=True, recall=True)
+                await self.read(message, respond=True, remember=True, recall=True)
             except:
                 await message.add_reaction("❌")
                 print(traceback.format_exc())
-                print("Unable to listen")
+                print("Unable to read")
         elif message.content.startswith(COMMANDS_PROG):
             print(f"Handling PROG")
             try:
@@ -367,6 +331,8 @@ class Bartender(commands.Bot):
                 print(traceback.format_exc())
                 print("Unable to clear")
 
+    async def on_voice_state_update(self, member, before, after):
+        print(f"Voice state update: {member} {before} {after}")
 
 if __name__ == "__main__":
     bot = Bartender(command_prefix=">", intents=discord.Intents.all())

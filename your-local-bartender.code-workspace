@@ -7,7 +7,16 @@
 	"settings": {
 		"workbench.colorCustomizations": {
 			"editor.lineHighlightBackground": "#1073cf2d",
-			"editor.lineHighlightBorder": "#9fced11f"
-		}
+			"editor.lineHighlightBorder": "#9fced11f",
+			"statusBar.debuggingBackground": "#19A119",
+			"statusBar.noFolderBackground": "#19A119",
+			"statussBar.prominentBackground": "#19A119"
+		},
+		"colorTabs.config": [
+			{
+				"regex": "./**/*",
+				"color": "#19A119"
+			},
+		]
 	}
 }
