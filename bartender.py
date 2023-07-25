@@ -129,7 +129,7 @@ class Bartender(commands.Bot):
         messages = [
             {
                 "role": "system",
-                "content": config.RESPONSE_PROMPT_1,
+                "content": config.RESPONSE_PROMPT_INSULT_1,
             },
         ]
 
@@ -140,10 +140,10 @@ class Bartender(commands.Bot):
         # Remember phrase
         if remember:
             await message.add_reaction("🧠")
-            self._messages.append(dict(role="user", content=phrase))
+            self._messages.append(dict(role="user", content=f"[{message.author.name}] {phrase}"))
 
         # Add new message to queue
-        messages.append({"role": "user", "content": phrase})
+        messages.append(dict(role="user", content=f"[{message.author.name}] {phrase}"))
 
         # Get response from OpenAI
         if respond:
@@ -155,11 +155,8 @@ class Bartender(commands.Bot):
                     "Content-Type": "application/json",
                     "Authorization": f"Bearer {config.OPENAI_API_KEY}",
                 },
-                json={"model": config.OPENAI_MODEL, "messages": messages},
+                json={"model": config.OPENAI_MODEL, "messages": messages, "temperature": 0.1},
             )
-
-            await message.clear_reaction("🤔")
-            await message.add_reaction("🗣️")
 
             print(f"OpenAI API response: {json.dumps(response.json(), indent=2)}")
 
@@ -172,10 +169,12 @@ class Bartender(commands.Bot):
             if remember:
                 self._messages.append({"role": "assistant", "content": generated_response})
 
-            tts = gTTS(text=generated_response, lang="en", tld="ie")
+            tts = gTTS(text=generated_response, lang="es", tld="com.mx")
             tts.save("audio.mp3")
 
+            await message.clear_reaction("🤔")
             await message.reply(generated_response)
+            await message.add_reaction("🗣️")
             await self.play_file("./audio.mp3")
 
         await message.add_reaction("✅")
@@ -247,10 +246,10 @@ class Bartender(commands.Bot):
 
         if os.name == "nt":
             audio = discord.FFmpegPCMAudio(
-                executable="c:/ffmpeg/bin/ffmpeg.exe", source=source, options="-af \"atempo=1.3\""
+                executable="c:/ffmpeg/bin/ffmpeg.exe", source=source, options="-af \"atempo=1.2\""
             )
         elif os.name == "posix":
-            audio = discord.FFmpegPCMAudio(executable="ffmpeg", source=source, options="-af \"atempo=1.3\"")
+            audio = discord.FFmpegPCMAudio(executable="ffmpeg", source=source, options="-af \"atempo=1.2\"")
 
         # Play the audio file using FFmpeg
         self._voice_client.play(audio)
