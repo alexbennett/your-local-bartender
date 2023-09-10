@@ -3,11 +3,11 @@ import requests
 import asyncio
 import speech_recognition as sr
 from gtts import gTTS
-import datetime
 import traceback
 import json
 import discord
 from discord.ext import commands
+import yt_dlp as youtube_dl
 
 import config
 import utilities
@@ -19,8 +19,10 @@ COMMANDS_SAY = ">say"
 COMMANDS_READ = ">read"
 COMMANDS_PROG = ">py"
 COMMANDS_PLAY = ">play"
+COMMANDS_STOP = ">stop"
+COMMANDS_QUEUE = ">queue"
 COMMANDS_CLEAR = ">clear"
-
+COMMANDS_SKIP = ">skip"
 
 class Bartender(commands.Bot):
     """
@@ -42,6 +44,19 @@ class Bartender(commands.Bot):
         self._programs = []
         self._guild = None
         self._voice_client = None
+        self._queue = []
+
+    async def play_next_in_queue(self):
+        """
+        Plays the next item in the queue, if any.
+        """
+        if self._queue:
+            message, title, url, next_item = self._queue.pop(0)  # Get the first item in the queue
+            await message.add_reaction("🎵")
+            await message.reply(f"Now playing _{title}_ {url}", suppress_embeds=True)
+            await self.play_file(next_item)
+            await message.clear_reaction("🎵")
+            await message.add_reaction("✅")
 
     async def prog(self, message, respond=True, remember=True, recall=True):
         """
@@ -246,10 +261,10 @@ class Bartender(commands.Bot):
 
         if os.name == "nt":
             audio = discord.FFmpegPCMAudio(
-                executable="c:/ffmpeg/bin/ffmpeg.exe", source=source, options="-af \"atempo=1.2\""
+                executable="c:/ffmpeg/bin/ffmpeg.exe", source=source, options="-af \"atempo=1.0\""
             )
         elif os.name == "posix":
-            audio = discord.FFmpegPCMAudio(executable="ffmpeg", source=source, options="-af \"atempo=1.2\"")
+            audio = discord.FFmpegPCMAudio(executable="ffmpeg", source=source, options="-af \"atempo=1.0\"")
 
         # Play the audio file using FFmpeg
         self._voice_client.play(audio)
@@ -261,6 +276,74 @@ class Bartender(commands.Bot):
         # Disconnect
         if auto_disconnect:
             await self._voice_client.disconnect()
+
+    async def play_youtube(self, message):
+        """
+        Plays audio from a YouTube video.
+
+        Args:
+            url_or_query (str): URL or query string.
+        """
+        url_or_query = message.content[len(COMMANDS_PLAY) + 1:]
+
+        await message.add_reaction("🔍")
+
+        # Determine if it's a URL or query string
+        if "youtube.com" in url_or_query or "youtu.be" in url_or_query:
+            url = url_or_query
+            title = url_or_query
+        else:
+            # Use youtube_dl to search YouTube for the query
+            with youtube_dl.YoutubeDL({"default_search": "ytsearch1:", "quiet": True}) as ydl:
+                info = ydl.extract_info(url_or_query, download=False)
+                with open("youtube_dl_info.json", "w") as f:
+                    json.dump(info, f, indent=2)
+                url = info["entries"][0]["webpage_url"]
+                title = info["entries"][0]["title"]
+
+        filename = 'downloaded_songs/' + info["title"]
+
+        # Download the audio from the YouTube video
+        ydl_opts = {
+            'format': 'bestaudio/best',
+            'postprocessors': [{
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': 'mp3',
+                'preferredquality': '192',
+            }],
+            'outtmpl': filename,
+            'quiet': True
+        }
+
+        await message.clear_reaction("🔍")
+        await message.add_reaction("⏬")
+
+        with youtube_dl.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([url])
+
+        await message.clear_reaction("⏬")
+
+        # Add the downloaded audio file to the queue
+        self._queue.append((message, title, url, filename + ".mp3"))
+
+        if not self._voice_client or not self._voice_client.is_connected():
+            await self.play_next_in_queue()
+        else:
+            await message.reply(f"_{title}_ ({url}) added to queue...", suppress_embeds=True)
+
+
+    async def stop(self, message):
+        """
+        Stops the bot and disconnects it from the voice channel (if connected).
+
+        Args:
+            message (discord.Message): Discord message instance representing the stop command.
+        """
+        if self._voice_client and self._voice_client.is_connected():
+            await self._voice_client.disconnect()
+            await message.add_reaction("👋")
+        else:
+            await message.add_reaction("❌")
 
     async def clear(self, message):
         """
@@ -276,6 +359,20 @@ class Bartender(commands.Bot):
         deleted = await channel.purge(limit=5, check=lambda x: True)
         return deleted
 
+    async def view_queue(self, message):
+        """
+        Displays the upcoming items in the queue.
+
+        Args:
+            message (discord.Message): Discord message instance representing the queue command.
+        """
+        if not self._queue:
+            await message.reply("The queue is empty.")
+            return
+
+        queue_info = "\n".join([f"{i+1}. _{title}_ ({url})" for i, (_, title, url, _) in enumerate(self._queue)])
+        await message.reply(f"Upcoming queue:\n{queue_info}", suppress_embeds=True)
+        
     async def on_ready(self):
         """
         Event handler that runs when the bot successfully logs in.
@@ -329,9 +426,44 @@ class Bartender(commands.Bot):
                 await message.add_reaction("❌")
                 print(traceback.format_exc())
                 print("Unable to clear")
+        elif message.content.startswith(COMMANDS_PLAY):
+            print("Handling PLAY")
+            try:
+                await self.play_youtube(message)
+            except:
+                await message.add_reaction("❌")
+                print(traceback.format_exc())
+                print("Unable to play YouTube video/audio")
+        elif message.content.startswith(COMMANDS_STOP):
+            print("Handling STOP")
+            try:
+                await self.stop(message)
+            except:
+                await message.add_reaction("❌")
+                print(traceback.format_exc())
+                print("Unable to stop")
+        elif message.content.startswith(COMMANDS_QUEUE):
+            print("Handling QUEUE")
+            try:
+                await self.view_queue(message)
+            except:
+                await message.add_reaction("❌")
+                print(traceback.format_exc())
+                print("Unable to show queue")
+        elif message.content.startswith(COMMANDS_SKIP):
+            print("Handling SKIP")
+            try:
+                await self.play_next_in_queue()
+            except:
+                await message.add_reaction("❌")
+                print(traceback.format_exc())
+                print("Unable to skip item")
 
     async def on_voice_state_update(self, member, before, after):
         print(f"Voice state update: {member} {before} {after}")
+        # Check if the bot should play the next item in the queue when a user leaves the voice channel
+        if member == self.user and before.channel is not None:
+            await self.play_next_in_queue()
 
 if __name__ == "__main__":
     bot = Bartender(command_prefix=">", intents=discord.Intents.all())
