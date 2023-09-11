@@ -5,8 +5,10 @@ import speech_recognition as sr
 from gtts import gTTS
 import traceback
 import json
+import mafic
 import discord
 from discord.ext import commands
+import wavelink
 import yt_dlp as youtube_dl
 
 import config
@@ -23,6 +25,9 @@ COMMANDS_STOP = ">stop"
 COMMANDS_QUEUE = ">queue"
 COMMANDS_CLEAR = ">clear"
 COMMANDS_SKIP = ">skip"
+COMMANDS_LISTEN = ">listen"
+
+r = sr.Recognizer()
 
 class Bartender(commands.Bot):
     """
@@ -42,9 +47,21 @@ class Bartender(commands.Bot):
         super().__init__(command_prefix=command_prefix, intents=intents)
         self._messages = []
         self._programs = []
+        self._connections = {}
         self._guild = None
         self._voice_client = None
         self._queue = []
+        self.pool = mafic.NodePool(self)
+
+        self.loop.create_task(self.add_nodes())
+
+    async def add_nodes(self):
+        await self.pool.create_node(
+            host="127.0.0.1",
+            port=2333,
+            label="MAIN",
+            password="youshallnotpass",
+        )
 
     async def play_next_in_queue(self):
         """
@@ -124,7 +141,7 @@ class Bartender(commands.Bot):
 
         print(f"🧠 Bartender program memory dump:\n{json.dumps(self._programs, indent=2)}")
 
-    async def read(self, message, respond=True, remember=True, recall=True):
+    async def read(self, message, override_phrase: str = None, respond=True, remember=True, recall=True):
         """
         Bartender reads the phrase, generates a response, and potentially plays a TTS audio response in the voice channel.
 
@@ -134,10 +151,13 @@ class Bartender(commands.Bot):
             remember (bool, optional): If True, the bot will commit the phrase and response to its memory to maintain conversational context. Defaults to True.
             recall (bool, optional): If True, the bot will prepend all messages from its memory to the response request. Defaults to True.
         """
-        phrase = message.content[len(COMMANDS_READ) + 1 :]
+        if override_phrase:
+            phrase = override_phrase
+        else:
+            phrase = message.content[len(COMMANDS_READ) + 1 :]
 
         print(
-            f"Listening to phrase: '{phrase}' - Respond? {respond} Remember? {remember} Recall? {recall}"
+            f"Listening to phrase: '{override_phrase}' - Respond? {respond} Remember? {remember} Recall? {recall}"
         )
 
         # Build message queue
@@ -190,7 +210,7 @@ class Bartender(commands.Bot):
             await message.clear_reaction("🤔")
             await message.reply(generated_response)
             await message.add_reaction("🗣️")
-            await self.play_file("./audio.mp3")
+            await self.play_file("./audio.mp3", tempo=1.2)
 
         await message.add_reaction("✅")
 
@@ -241,7 +261,7 @@ class Bartender(commands.Bot):
         await message.clear_reaction("🗣️")
         await message.add_reaction("✅")
 
-    async def play_file(self, source="./audio.mp3", auto_disconnect=True):
+    async def play_file(self, source="./audio.mp3", tempo=1.0, auto_disconnect=True):
         """
         Plays an audio file in the voice channel.
 
@@ -261,10 +281,10 @@ class Bartender(commands.Bot):
 
         if os.name == "nt":
             audio = discord.FFmpegPCMAudio(
-                executable="c:/ffmpeg/bin/ffmpeg.exe", source=source, options="-af \"atempo=1.0\""
+                executable="c:/ffmpeg/bin/ffmpeg.exe", source=source, options=f"-af \"atempo={tempo}\""
             )
         elif os.name == "posix":
-            audio = discord.FFmpegPCMAudio(executable="ffmpeg", source=source, options="-af \"atempo=1.0\"")
+            audio = discord.FFmpegPCMAudio(executable="ffmpeg", source=source, options=f"-af \"atempo={tempo}\"")
 
         # Play the audio file using FFmpeg
         self._voice_client.play(audio)
@@ -331,7 +351,6 @@ class Bartender(commands.Bot):
         else:
             await message.reply(f"_{title}_ ({url}) added to queue...", suppress_embeds=True)
 
-
     async def stop(self, message):
         """
         Stops the bot and disconnects it from the voice channel (if connected).
@@ -339,6 +358,13 @@ class Bartender(commands.Bot):
         Args:
             message (discord.Message): Discord message instance representing the stop command.
         """
+        if message.guild.id in self._connections:  # Check if the guild is in the cache.
+            vc = self._connections[message.guild.id]
+            vc.stop_recording()  # Stop recording, and call the callback (once_done).
+            del self._connections[message.guild.id]  # Remove the guild from the cache.
+        else:
+            await message.respond("I am currently not recording here.")  # Respond with this if we aren't recording.
+
         if self._voice_client and self._voice_client.is_connected():
             await self._voice_client.disconnect()
             await message.add_reaction("👋")
@@ -372,6 +398,50 @@ class Bartender(commands.Bot):
 
         queue_info = "\n".join([f"{i+1}. _{title}_ ({url})" for i, (_, title, url, _) in enumerate(self._queue)])
         await message.reply(f"Upcoming queue:\n{queue_info}", suppress_embeds=True)
+
+    async def once_done(self, sink: discord.sinks, channel: discord.TextChannel, *args):  # Our voice client already passes these in.
+        recorded_users = [  # A list of recorded users
+            f"<@{user_id}>"
+            for user_id, audio in sink.audio_data.items()
+        ]
+        await sink.vc.disconnect()  # Disconnect from the voice channel.
+        # files = [discord.File(audio.file, f"{user_id}.{sink.encoding}") for user_id, audio in sink.audio_data.items()]  # List down the files.
+        files = [audio.file for _, audio in sink.audio_data.items()]  # List down the files.
+        
+        with open("audio.wav", "wb") as f:
+            f.write(files[0].getbuffer())
+
+        message = await channel.send(f"I heard {recorded_users[0]} say something...")
+
+        with sr.AudioFile("audio.wav") as source:
+            try:
+                audio = r.record(source)
+                text = r.recognize_whisper(audio)
+                print(f"Recognized speech: {text}")
+                await self.read(message, override_phrase=text, respond=True, remember=True, recall=True)
+            except sr.UnknownValueError:
+                await message.reply("Sorry, I could not understand what you said.")
+            except:
+                print(traceback.format_exc())
+                await message.reply("Sorry, there was an error processing your audio.")
+        
+    async def listen(self, message):
+        # Check if the user is in a voice channel
+        if message.author.voice is None:
+            await message.reply("You are not in a voice channel.")
+            return
+
+        # Connect to the user's voice channel
+        channel = message.author.voice.channel
+        vc = await channel.connect()
+        self._connections.update({message.guild.id: vc})  # Updating the cache with the guild and channel.
+
+        vc.start_recording(
+            discord.sinks.WaveSink(),  # The sink type to use.
+            self.once_done,  # What to do once done.
+            message.channel  # The channel to disconnect from.
+        )
+        await message.add_reaction("👂")
         
     async def on_ready(self):
         """
@@ -458,12 +528,23 @@ class Bartender(commands.Bot):
                 await message.add_reaction("❌")
                 print(traceback.format_exc())
                 print("Unable to skip item")
+        elif message.content.startswith(COMMANDS_LISTEN):
+            print("Handling LISTEN")
+            try:
+                await self.listen(message)
+            except:
+                await message.add_reaction("❌")
+                print(traceback.format_exc())
+                print("Unable to listen to voice channel")
 
     async def on_voice_state_update(self, member, before, after):
         print(f"Voice state update: {member} {before} {after}")
         # Check if the bot should play the next item in the queue when a user leaves the voice channel
         if member == self.user and before.channel is not None:
             await self.play_next_in_queue()
+
+    async def on_wavelink_node_ready(node: wavelink.Node):
+        print(f"{node.identifier} is ready.") # print a message
 
 if __name__ == "__main__":
     bot = Bartender(command_prefix=">", intents=discord.Intents.all())
