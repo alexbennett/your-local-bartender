@@ -12,6 +12,7 @@ import discord
 from discord.ext import commands
 import wavelink
 import yt_dlp as youtube_dl
+from openai import OpenAI
 
 import config
 import utilities
@@ -30,7 +31,7 @@ COMMANDS_SKIP = ">skip"
 COMMANDS_LISTEN = ">listen"
 
 r = sr.Recognizer()
-
+client = OpenAI()
 
 class Bartender(commands.Bot):
     """
@@ -177,7 +178,7 @@ class Bartender(commands.Bot):
             json={
                 "model": config.OPENAI_MODEL,
                 "messages": messages,
-                "temperature": 0.8,
+                "temperature": 0.5,
             },
         )
 
@@ -198,6 +199,37 @@ class Bartender(commands.Bot):
         await message.add_reaction("✅")
 
         # print(f"🧠 Bartender program memory dump:\n{json.dumps(self._programs, indent=2)}")
+
+async def join(self, message):
+    """
+    Joins the requester's voice channel and starts recording all voice activity in 30-second intervals.
+
+    Args:
+        message (discord.Message): Discord message instance representing the join command.
+    """
+    # Check if the user is in a voice channel
+    if message.author.voice is None:
+        await message.reply("You are not in a voice channel.")
+        return
+
+    # Connect to the user's voice channel
+    channel = message.author.voice.channel
+    if self._voice_client and self._voice_client.is_connected():
+        await self._voice_client.move_to(channel)
+    else:
+        self._voice_client = await channel.connect()
+
+    # Start recording voice activity
+    while self._voice_client and self._voice_client.is_connected():
+        self._voice_client.start_recording(
+            discord.sinks.WaveSink(),
+            self.once_done,
+            message.channel,
+            message
+        )
+        await asyncio.sleep(30)
+        self._voice_client.stop_recording()
+
 
     async def read(
         self,
@@ -272,7 +304,7 @@ class Bartender(commands.Bot):
                     json={
                         "model": config.OPENAI_MODEL,
                         "messages": messages,
-                        "temperature": 0.6,
+                        "temperature": 0.7,
                     },
                 ) as response:
                     if response.status != 200:
@@ -293,15 +325,11 @@ class Bartender(commands.Bot):
                     {"role": "assistant", "content": generated_response}
                 )
 
-            tts = gTTS(text=generated_response, lang="es", tld="com.mx")
-            tts.save("generated_audio/response.mp3")
-
             await message.clear_reaction("🤔")
             await message.reply(generated_response)
             await message.add_reaction("🗣️")
-            await self.play_file(
-                "generated_audio/response.mp3", tempo=1.2, auto_disconnect=False
-            )
+            await self.say_raw(generated_response)
+            await message.clear_reaction("🗣️")
 
         await message.add_reaction("✅")
 
@@ -332,23 +360,44 @@ class Bartender(commands.Bot):
 
     async def say(self, message):
         """
-        Generates TTS audio from a text message and plays it in the voice channel.
+        Generates TTS audio from a text message using OpenAI's Text-to-Speech API and plays it in the voice channel.
 
         Args:
             message (discord.Message): Discord message instance representing the say command.
         """
         await message.add_reaction("🤔")
 
-        print(f'Generating TTS audio for: "{message.content[len(COMMANDS_SAY):]}"')
+        try:
+            await message.clear_reaction("🤔")
+            await message.add_reaction("🗣️")
+            await self.say_raw(message.content[len(COMMANDS_SAY) + 1:])
+            await message.clear_reaction("🗣️")
+            await message.add_reaction("✅")
+        except:
+            await message.clear_reaction("🤔")
+            await message.add_reaction("❌")
+            print("Failed to generate TTS audio")
 
-        tts = gTTS(text=message.content[4:], lang="en", tld=config.GTTS_TLD)
-        tts.save("generated_audio/say.mp3")
+    async def say_raw(self, message):
+        """
+        Generates TTS audio from a text message using OpenAI's Text-to-Speech API and plays it in the voice channel.
 
-        await message.clear_reaction("🤔")
-        await message.add_reaction("🗣️")
-        await self.play_file("generated_audio/say.mp3")
-        await message.clear_reaction("🗣️")
-        await message.add_reaction("✅")
+        Args:
+            message (discord.Message): Discord message instance representing the say command.
+        """
+        print(f'Generating TTS audio for: "{message}"')
+
+        try:
+            response = client.audio.speech.create(
+                model="tts-1-hd",
+                voice="onyx",
+                input=message,
+            )
+
+            response.stream_to_file("generated_audio/say.mp3")
+            await self.play_file("generated_audio/say.mp3", tempo=1.0)
+        except:
+            print("Failed to generate TTS audio")
 
     async def play_file(
         self, source="generated_audio/audio.mp3", tempo=1.0, auto_disconnect=True
@@ -372,6 +421,8 @@ class Bartender(commands.Bot):
         else:
             self._voice_client = await channel.connect()
 
+        await asyncio.sleep(1)
+
         if os.name == "nt":
             audio = discord.FFmpegPCMAudio(
                 executable="c:/ffmpeg/bin/ffmpeg.exe",
@@ -388,7 +439,7 @@ class Bartender(commands.Bot):
 
         # Wait for playback to finish
         while self._voice_client.is_playing():
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(1)
 
         # Disconnect
         if auto_disconnect:
@@ -516,8 +567,10 @@ class Bartender(commands.Bot):
         recorded_users = [  # A list of recorded users
             f"<@{user_id}>" for user_id, audio in sink.audio_data.items()
         ]
-        await sink.vc.disconnect()  # Disconnect from the voice channel.
         # files = [discord.File(audio.file, f"{user_id}.{sink.encoding}") for user_id, audio in sink.audio_data.items()]  # List down the files.
+
+        print(recorded_users)
+
         files = [
             audio.file for _, audio in sink.audio_data.items()
         ]  # List down the files.
@@ -541,23 +594,20 @@ class Bartender(commands.Bot):
             ]
         )
 
-        with sr.AudioFile("generated_audio/request-processed.wav") as source:
-            try:
-                audio = r.record(source)
-                text = r.recognize_whisper(audio, language="english")
-                print(f"\n\nRecognized speech: {text}\n\n")
-                await self.read(
-                    message,
-                    override_phrase=text,
-                    respond=True,
-                    remember=True,
-                    recall=True,
-                )
-            except sr.UnknownValueError:
-                await message.reply("Sorry, I could not understand what you said.")
-            except:
-                print(traceback.format_exc())
-                await message.reply("Sorry, there was an error processing your audio.")
+        audio_file= open("generated_audio/request-processed.wav", "rb")
+        transcript = client.audio.transcriptions.create(
+            model="whisper-1", 
+            file=audio_file,
+            response_format="text"
+        )
+        print(f"\n\nRecognized speech: {transcript}\n\n")
+        await self.read(
+            message,
+            override_phrase=transcript,
+            respond=True,
+            remember=True,
+            recall=True,
+        )
 
     async def listen(self, message):
         # Check if the user is in a voice channel
@@ -577,6 +627,7 @@ class Bartender(commands.Bot):
             self.once_done,  # What to do once done.
             message.channel,  # The channel to disconnect from.
             message,  # The args to pass to the callback.
+            filter=lambda m: m.author.id == message.author.id,  # Record only the requester
         )
         self._is_recording = True
         await message.add_reaction("👂")

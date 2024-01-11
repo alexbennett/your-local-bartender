@@ -1,22 +1,49 @@
 {
-	"folders": [
-		{
-			"path": "."
-		}
-	],
-	"settings": {
-		"workbench.colorCustomizations": {
-			"editor.lineHighlightBackground": "#1073cf2d",
-			"editor.lineHighlightBorder": "#9fced11f",
-			"statusBar.debuggingBackground": "#19A119",
-			"statusBar.noFolderBackground": "#19A119",
-			"statussBar.prominentBackground": "#19A119"
-		},
-		"colorTabs.config": [
-			{
-				"regex": "./**/*",
-				"color": "#19A119"
-			},
-		]
-	}
+    "folders": [
+        {
+            "path": "."
+        }
+    ],
+    "settings": {
+        "workbench.colorCustomizations": {
+            "editor.lineHighlightBackground": "#1073cf2d",
+            "editor.lineHighlightBorder": "#9fced11f"
+        },
+        "terminal.integrated.profiles.linux": {
+            // "WSL Ubuntu - LavaLink": {
+            //     "path": "wsl.exe",
+            //     "args": ["sleep 20"],
+            //     "icon": "terminal-ubuntu",
+            //     "overrideName": true
+            // },
+            "WSL Ubuntu - Bartender": {
+                "path": "wsl.exe",
+                "args": ["-d", "Ubuntu", "--exec", "sleep 30 && source .credentials/keys.env && python bartender.py"],
+                "icon": "terminal-ubuntu",
+                "overrideName": true
+            }
+        },
+        "terminal.integrated.defaultProfile.linux": "WSL Ubuntu - LavaLink"
+    },
+    "tasks": {
+        "version": "2.0.0",
+        "tasks": [
+            {
+                "label": "Run LavaLink",
+                "type": "shell",
+                "command": "java -jar LavaLink.jar",
+                "presentation": {
+                    "panel": "new"
+                }
+            },
+            {
+                "label": "Run Bartender",
+                "type": "shell",
+                "command": "sleep 30 && source .credentials/keys.env && python bartender.py",
+                "presentation": {
+                    "panel": "new"
+                }
+            }
+        ]
+    }
 }
