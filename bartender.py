@@ -3,6 +3,8 @@ import subprocess
 import requests
 import asyncio
 import aiohttp
+import time
+import threading
 import speech_recognition as sr
 from gtts import gTTS
 import traceback
@@ -29,6 +31,7 @@ COMMANDS_QUEUE = ">queue"
 COMMANDS_CLEAR = ">clear"
 COMMANDS_SKIP = ">skip"
 COMMANDS_LISTEN = ">listen"
+COMMANDS_JOIN = ">join"
 
 r = sr.Recognizer()
 client = OpenAI()
@@ -55,7 +58,10 @@ class Bartender(commands.Bot):
         self._guild = None
         self._voice_client = None
         self._queue = []
+        self._is_recording = False
+        self._is_speaking = False
         self.pool = mafic.NodePool(self)
+        self.listen_thread = None  # Initialize listen_thread attribute
 
         self.loop.create_task(self.add_nodes())
 
@@ -83,37 +89,45 @@ class Bartender(commands.Bot):
             message_content = message.content
             message_dict[sender_name] = message_content
 
-        print("message_dict:", message_dict)
-
         return message_dict
 
     async def online_users(self, message):
         """Gets a list of online users from the given message's guild."""
 
         online_members = [
-            member.name
+            member.display_name
             for member in message.guild.members
             if member.status == discord.Status.online
         ]
 
         return online_members
 
+    async def bot_display_name(self, message):
+        """Gets the display name of the bot in the given message's guild."""
+        
+        bot_member = message.guild.get_member(self.user.id)
+        
+        if bot_member:
+            return bot_member.display_name
+        else:
+            return "Bartender"
+        
     async def users_in_voice_channel(self, message):
-        """Gets a list of users in the same voice channel as the sender of the message."""
+        """Gets a list of user display names in the same voice channel as the sender of the message."""
 
         voice_channel = message.author.voice.channel if message.author.voice else None
 
         if voice_channel:
-            return [member.name for member in voice_channel.members]
+            return [member.display_name for member in voice_channel.members]
         else:
             return None
-
+    
     async def add_nodes(self):
         await self.pool.create_node(
             host="127.0.0.1",
             port=2333,
             label="MAIN",
-            password="youshallnotpass",
+            password="*#kRzdk5u#P7",
         )
 
     async def play_next_in_queue(self):
@@ -130,111 +144,188 @@ class Bartender(commands.Bot):
             await message.clear_reaction("🎵")
             await message.add_reaction("✅")
 
-    async def prog(self, message, respond=True, remember=True, recall=True):
+    async def join(self, message):
         """
-        Bartender reads the prompt, generates a program, and potentially plays a TTS audio response in the voice channel.
+        Joins the requester's voice channel and starts recording all voice activity in 30-second intervals.
 
         Args:
-            message (discord.Message): Discord message instance representing the prog command.
-            respond (bool, optional): If True, the bot will generate a TTS audio response and play it in the voice channel. Defaults to True.
-            remember (bool, optional): If True, the bot will commit the phrase and response to its memory to maintain conversational context. Defaults to True.
-            recall (bool, optional): If True, the bot will prepend all messages from its memory to the response request. Defaults to True.
+            message (discord.Message): Discord message instance representing the join command.
         """
-        phrase = message.content[len(COMMANDS_READ) + 1 :]
+        # Check if the user is in a voice channel
+        if message.author.voice is None:
+            await message.reply("You are not in a voice channel.")
+            return
 
-        print(
-            f"Listening to program request: '{phrase}' - Respond? {respond} Remember? {remember} Recall? {recall}"
+        # Connect to the user's voice channel
+        channel = message.author.voice.channel
+        if self._voice_client and self._voice_client.is_connected():
+            await self._voice_client.move_to(channel)
+        else:
+            self._voice_client = await channel.connect()
+
+        # Create a thread to run the continuous recording loop
+        self.listen_thread = threading.Thread(
+            target=self.continuous_listen,
+            args=(message.channel, message)
         )
+        self.listen_thread.daemon = True
+        self.listen_thread.start()
+        await message.add_reaction("👂")
 
-        # Build message queue
-        messages = [
-            {
-                "role": "system",
-                "content": config.RESPONSE_PROMPT_2,
-            },
-        ]
+    async def stop(self, message):
+        """
+        Stops the bot and disconnects it from the voice channel (if connected).
 
-        # Load previous conversation into message queue
-        if recall:
-            messages.extend(self._programs)
+        Args:
+            message (discord.Message): Discord message instance representing the stop command.
+        """
+        if self.listen_thread:
+            self.listen_thread.join()  # Stop the continuous_listen thread
 
-        # Remember phrase
-        if remember:
-            await message.add_reaction("🧠")
-            self._programs.append(dict(role="user", content=phrase))
+        if self._voice_client and self._is_recording:
+            self._voice_client.stop_recording()
+            self._is_recording = False
+        else:
+            await message.respond("I am currently not recording here.")
 
-        # Add new message to queue
-        messages.append({"role": "user", "content": phrase})
+        if self._voice_client and self._voice_client.is_connected():
+            await self._voice_client.disconnect()
+            await message.add_reaction("👋")
+        else:
+            await message.add_reaction("❌")
 
-        # Get response from OpenAI
-        await message.add_reaction("🤔")
+    async def once_done(
+        self, sink: discord.sinks, channel: discord.TextChannel, *args
+    ):
+        message = args[0]  # Get the message from the args.
 
-        response = requests.post(
-            "https://api.openai.com/v1/chat/completions",
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {config.OPENAI_API_KEY}",
-            },
-            json={
-                "model": config.OPENAI_MODEL,
-                "messages": messages,
-                "temperature": 0.5,
-            },
+        # Check if any users were recorded
+        if not sink.audio_data:
+            print("No users were recorded, looping again...")
+            return
+
+        for user_id, audio in sink.audio_data.items():
+            user_name = await self.get_username_from_id(user_id, message.guild)
+            if user_name:
+                transcript = await self.process_audio_stream(user_name, audio)
+
+                # Tag each transcript with the username/display name
+                tagged_transcript = f"{user_name}: {transcript}"
+
+                await self.read(
+                    message,
+                    override_phrase=tagged_transcript,
+                    respond=config.CONTINUOUS_LISTEN_ACTIVATOR in tagged_transcript.lower(),
+                    remember=True,
+                    recall=True,
+                    override_author_name=user_name,
+                )
+            else:
+                print(f"User with ID {user_id} not found in the guild.")
+
+    async def get_username_from_id(self, user_id, guild):
+        try:
+            user = await guild.fetch_member(user_id)
+            if user:
+                return user.display_name
+        except Exception as e:
+            print(f"Error fetching username for user ID {user_id}: {str(e)}")
+        return None
+    
+    async def process_audio_stream(self, user_name, audio):
+        filename = f"generated_audio/request-{user_name}.wav"
+
+        with open(filename, "wb") as f:
+            f.write(audio.file.getbuffer())
+
+        audio_file = open(filename, "rb")
+
+        transcript = client.audio.transcriptions.create(
+            model="whisper-1",
+            file=audio_file,
+            response_format="text",
         )
+        print(f"[{user_name}]: {transcript}")
 
-        # print(f"OpenAI API response: {json.dumps(response.json(), indent=2)}")
+        return transcript
+    
+    async def listen(self, message):
+        # Check if the user is in a voice channel
+        if message.author.voice is None:
+            await message.reply("You are not in a voice channel.")
+            return
 
-        generated_response = response.json()["choices"][0]["message"]["content"].strip()
+        # Connect to the user's voice channel
+        channel = message.author.voice.channel
+        if self._voice_client and self._voice_client.is_connected():
+            await self._voice_client.move_to(channel)
+        else:
+            self._voice_client = await channel.connect()
 
-        await message.clear_reaction("🤔")
-        await message.reply(generated_response)
-
-        # Remember generated phrase
-        if remember:
-            self._programs.append({"role": "assistant", "content": generated_response})
-
-        if respond:
-            pass
-
-        await message.add_reaction("✅")
-
-        # print(f"🧠 Bartender program memory dump:\n{json.dumps(self._programs, indent=2)}")
-
-async def join(self, message):
-    """
-    Joins the requester's voice channel and starts recording all voice activity in 30-second intervals.
-
-    Args:
-        message (discord.Message): Discord message instance representing the join command.
-    """
-    # Check if the user is in a voice channel
-    if message.author.voice is None:
-        await message.reply("You are not in a voice channel.")
-        return
-
-    # Connect to the user's voice channel
-    channel = message.author.voice.channel
-    if self._voice_client and self._voice_client.is_connected():
-        await self._voice_client.move_to(channel)
-    else:
-        self._voice_client = await channel.connect()
-
-    # Start recording voice activity
-    while self._voice_client and self._voice_client.is_connected():
         self._voice_client.start_recording(
-            discord.sinks.WaveSink(),
-            self.once_done,
-            message.channel,
-            message
+            discord.sinks.WaveSink(),  # The sink type to use.
+            self.once_done,  # What to do once done.
+            message.channel,  # The channel to disconnect from.
+            message,  # The args to pass to the callback.
+            filter=lambda m: m.author.id == message.author.id,  # Record only the requester
         )
-        await asyncio.sleep(30)
-        self._voice_client.stop_recording()
+        self._is_recording = True
+        await message.add_reaction("👂")
+
+        await asyncio.sleep(7)  # Wait for 5 seconds.
+
+        if self._is_recording:  # Check if the guild is in the cache.
+            self._voice_client.stop_recording()  # Stop recording, and call the callback (once_done).
+            self._is_recording = False
+
+        await message.clear_reaction("👂")
+
+        
+    def continuous_listen(self, text_channel, message):
+        """
+        Continuous loop to record voice activity in 30-second intervals.
+        
+        Args:
+            text_channel (discord.TextChannel): Discord text channel to send messages.
+            message (discord.Message): Discord message instance representing the join command.
+        """
+        while True:            
+            try:
+                if not self._voice_client.is_connected():
+                    print("Voice client is not connected, exiting continuous_listen")
+                    break
+
+                if not self._is_recording:
+                    self._voice_client.start_recording(
+                        discord.sinks.WaveSink(),
+                        self.once_done,
+                        text_channel,
+                        message
+                    )
+                    self._is_recording = True
+
+                time.sleep(config.CONTINUOUS_LISTEN_RECORDING_INTERVAL)
+
+                if self._is_recording:
+                    try:
+                        if self.listen_thread:
+                            self.listen_thread.join()  # Stop the continuous_listen thread
+                    except:
+                        pass
+                    self._voice_client.stop_recording()
+                    self._is_recording = False
+
+                time.sleep(config.CONTINUOUS_LISTEN_PAUSE_TIME)
+
+            except Exception as e:
+                print(f"Error in continuous_listen: {str(e)}")
 
 
     async def read(
         self,
         message,
         override_phrase: str = None,
+        override_author_name: str = None,
         respond=True,
         remember=True,
         recall=True,
@@ -253,9 +344,10 @@ async def join(self, message):
         else:
             phrase = message.content[len(COMMANDS_READ) + 1 :]
 
-        print(
-            f"Listening to phrase: '{override_phrase}' - Respond? {respond} Remember? {remember} Recall? {recall}"
-        )
+        if override_author_name:
+            author_name = override_author_name
+        else:
+            author_name = message.author.name
 
         self._guild = self.guilds[0]  # Assuming the bot is only in one guild
         channel = discord.utils.get(
@@ -267,6 +359,7 @@ async def join(self, message):
             {
                 "role": "system",
                 "content": config.RESPONSE_PROMPT_1.format(
+                    community_name=await self.bot_display_name(message),
                     online_users=await self.online_users(message),
                     same_channel_users=await self.users_in_voice_channel(message),
                     recent_messages=await self.get_last_x_messages(channel, 50),
@@ -282,43 +375,28 @@ async def join(self, message):
         if remember:
             await message.add_reaction("🧠")
             self._messages.append(
-                dict(role="user", content=f"**{message.author.name}:** {phrase}")
+                dict(role="user", content=f"**{author_name}:** {phrase}")
             )
 
         # Add new message to queue
         messages.append(
-            dict(role="user", content=f"[**{message.author.name}:** {phrase}")
+            dict(role="user", content=f"[**{author_name}:** {phrase}")
         )
 
         # Get response from OpenAI asynchronously
         if respond:
             await message.add_reaction("🤔")
 
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    "https://api.openai.com/v1/chat/completions",
-                    headers={
-                        "Content-Type": "application/json",
-                        "Authorization": f"Bearer {config.OPENAI_API_KEY}",
-                    },
-                    json={
-                        "model": config.OPENAI_MODEL,
-                        "messages": messages,
-                        "temperature": 0.7,
-                    },
-                ) as response:
-                    if response.status != 200:
-                        await message.add_reaction("❌")
-                        print("Failed to get response from OpenAI")
-                        return
+            res = client.chat.completions.create(
+                model=config.OPENAI_MODEL,
+                messages=messages,
+                temperature=0.4,
+            )
 
-                    data = await response.json()
-                    generated_response = data["choices"][0]["message"][
-                        "content"
-                    ].strip()
+            generated_response = res.choices[0].message.content.strip()
 
-            print(f"OpenAI API response: {generated_response}")
-
+            print(f"[Bartender]: {generated_response}")
+        
             # Remember generated phrase
             if remember:
                 self._messages.append(
@@ -326,7 +404,7 @@ async def join(self, message):
                 )
 
             await message.clear_reaction("🤔")
-            await message.reply(generated_response)
+            await message.reply(f"@{author_name} {generated_response}")
             await message.add_reaction("🗣️")
             await self.say_raw(generated_response)
             await message.clear_reaction("🗣️")
@@ -385,22 +463,22 @@ async def join(self, message):
         Args:
             message (discord.Message): Discord message instance representing the say command.
         """
-        print(f'Generating TTS audio for: "{message}"')
-
         try:
             response = client.audio.speech.create(
                 model="tts-1-hd",
-                voice="onyx",
+                voice=config.OPENAI_TTS_VOICE,
                 input=message,
             )
 
             response.stream_to_file("generated_audio/say.mp3")
-            await self.play_file("generated_audio/say.mp3", tempo=1.0)
+            self._is_speaking = True
+            await self.play_file("generated_audio/say.mp3", tempo=1.0, auto_disconnect=False, auto_move_channel=False)
+            self._is_speaking = False
         except:
             print("Failed to generate TTS audio")
 
     async def play_file(
-        self, source="generated_audio/audio.mp3", tempo=1.0, auto_disconnect=True
+        self, source="generated_audio/audio.mp3", tempo=1.0, auto_disconnect=True, auto_move_channel=True
     ):
         """
         Plays an audio file in the voice channel.
@@ -416,12 +494,13 @@ async def join(self, message):
         )
 
         # Handle (re)connection
-        if self._voice_client and self._voice_client.is_connected():
-            await self._voice_client.move_to(channel)
-        else:
-            self._voice_client = await channel.connect()
+        if auto_move_channel:
+            if self._voice_client and self._voice_client.is_connected():
+                await self._voice_client.move_to(channel)
+            else:
+                self._voice_client = await channel.connect()
 
-        await asyncio.sleep(1)
+        await asyncio.sleep(0.1)
 
         if os.name == "nt":
             audio = discord.FFmpegPCMAudio(
@@ -503,29 +582,6 @@ async def join(self, message):
         else:
             await message.reply(f"_{title}_ ({url}) added to queue...")
 
-    async def stop(self, message):
-        """
-        Stops the bot and disconnects it from the voice channel (if connected).
-
-        Args:
-            message (discord.Message): Discord message instance representing the stop command.
-        """
-        if (
-            self._voice_client and self._is_recording
-        ):  # Check if the guild is in the cache.
-            self._voice_client.stop_recording()  # Stop recording, and call the callback (once_done).
-            self._is_recording = False
-        else:
-            await message.respond(
-                "I am currently not recording here."
-            )  # Respond with this if we aren't recording.
-
-        if self._voice_client and self._voice_client.is_connected():
-            await self._voice_client.disconnect()
-            await message.add_reaction("👋")
-        else:
-            await message.add_reaction("❌")
-
     async def clear(self, message):
         """
         Clears a specified number of messages in the channel where the command is invoked.
@@ -559,86 +615,6 @@ async def join(self, message):
         )
         await message.reply(f"Upcoming queue:\n{queue_info}")
 
-    async def once_done(
-        self, sink: discord.sinks, channel: discord.TextChannel, *args
-    ):  # Our voice client already passes these in.
-        message = args[0]  # Get the message from the args.
-
-        recorded_users = [  # A list of recorded users
-            f"<@{user_id}>" for user_id, audio in sink.audio_data.items()
-        ]
-        # files = [discord.File(audio.file, f"{user_id}.{sink.encoding}") for user_id, audio in sink.audio_data.items()]  # List down the files.
-
-        print(recorded_users)
-
-        files = [
-            audio.file for _, audio in sink.audio_data.items()
-        ]  # List down the files.
-
-        with open("generated_audio/request.wav", "wb") as f:
-            f.write(files[0].getbuffer())
-
-        subprocess.run(
-            [
-                "ffmpeg",
-                "-y",
-                "-i",
-                "generated_audio/request.wav",
-                "-acodec",
-                "pcm_s16le",
-                "-ac",
-                "1",
-                "-ar",
-                "16000",
-                "generated_audio/request-processed.wav",
-            ]
-        )
-
-        audio_file= open("generated_audio/request-processed.wav", "rb")
-        transcript = client.audio.transcriptions.create(
-            model="whisper-1", 
-            file=audio_file,
-            response_format="text"
-        )
-        print(f"\n\nRecognized speech: {transcript}\n\n")
-        await self.read(
-            message,
-            override_phrase=transcript,
-            respond=True,
-            remember=True,
-            recall=True,
-        )
-
-    async def listen(self, message):
-        # Check if the user is in a voice channel
-        if message.author.voice is None:
-            await message.reply("You are not in a voice channel.")
-            return
-
-        # Connect to the user's voice channel
-        channel = message.author.voice.channel
-        if self._voice_client and self._voice_client.is_connected():
-            await self._voice_client.move_to(channel)
-        else:
-            self._voice_client = await channel.connect()
-
-        self._voice_client.start_recording(
-            discord.sinks.WaveSink(),  # The sink type to use.
-            self.once_done,  # What to do once done.
-            message.channel,  # The channel to disconnect from.
-            message,  # The args to pass to the callback.
-            filter=lambda m: m.author.id == message.author.id,  # Record only the requester
-        )
-        self._is_recording = True
-        await message.add_reaction("👂")
-
-        await asyncio.sleep(7)  # Wait for 5 seconds.
-
-        if self._is_recording:  # Check if the guild is in the cache.
-            self._voice_client.stop_recording()  # Stop recording, and call the callback (once_done).
-            self._is_recording = False
-
-        await message.clear_reaction("👂")
 
     async def on_ready(self):
         """
@@ -659,7 +635,6 @@ async def join(self, message):
                 await self.say(message)
             except:
                 await message.add_reaction("❌")
-                print(traceback.format_exc())
                 print("Unable to speak")
         elif message.content.startswith(COMMANDS_READ):
             print(f"Handling READ")
@@ -667,7 +642,6 @@ async def join(self, message):
                 await self.read(message, respond=True, remember=True, recall=True)
             except:
                 await message.add_reaction("❌")
-                print(traceback.format_exc())
                 print("Unable to read")
         elif message.content.startswith(COMMANDS_PROG):
             print(f"Handling PROG")
@@ -675,7 +649,6 @@ async def join(self, message):
                 await self.prog(message, respond=True, remember=True, recall=True)
             except:
                 await message.add_reaction("❌")
-                print(traceback.format_exc())
                 print("Unable to prog")
         elif message.content.startswith(COMMANDS_PIC):
             print(f"Handling PIC")
@@ -683,7 +656,6 @@ async def join(self, message):
                 await self.pic(message)
             except:
                 await message.add_reaction("❌")
-                print(traceback.format_exc())
                 print("Unable to generate pic")
         elif message.content.startswith(COMMANDS_CLEAR):
             print("Handling CLEAR")
@@ -691,7 +663,6 @@ async def join(self, message):
                 await self.clear(message)
             except:
                 await message.add_reaction("❌")
-                print(traceback.format_exc())
                 print("Unable to clear")
         elif message.content.startswith(COMMANDS_PLAY):
             print("Handling PLAY")
@@ -699,7 +670,6 @@ async def join(self, message):
                 await self.play_youtube(message)
             except:
                 await message.add_reaction("❌")
-                print(traceback.format_exc())
                 print("Unable to play YouTube video/audio")
         elif message.content.startswith(COMMANDS_STOP):
             print("Handling STOP")
@@ -707,7 +677,6 @@ async def join(self, message):
                 await self.stop(message)
             except:
                 await message.add_reaction("❌")
-                print(traceback.format_exc())
                 print("Unable to stop")
         elif message.content.startswith(COMMANDS_QUEUE):
             print("Handling QUEUE")
@@ -715,7 +684,6 @@ async def join(self, message):
                 await self.view_queue(message)
             except:
                 await message.add_reaction("❌")
-                print(traceback.format_exc())
                 print("Unable to show queue")
         elif message.content.startswith(COMMANDS_SKIP):
             print("Handling SKIP")
@@ -723,7 +691,6 @@ async def join(self, message):
                 await self.play_next_in_queue()
             except:
                 await message.add_reaction("❌")
-                print(traceback.format_exc())
                 print("Unable to skip item")
         elif message.content.startswith(COMMANDS_LISTEN):
             print("Handling LISTEN")
@@ -731,11 +698,19 @@ async def join(self, message):
                 await self.listen(message)
             except:
                 await message.add_reaction("❌")
-                print(traceback.format_exc())
                 print("Unable to listen to voice channel")
+        elif message.content.startswith(COMMANDS_JOIN):
+            print("Handling JOIN")
+            try:
+                await self.join(message)
+            except:
+                print("Error while listening in voice channel")
+                print(traceback.format_exc())
+                if self._voice_client:
+                    await self._voice_client.disconnect()
 
     async def on_voice_state_update(self, member, before, after):
-        print(f"Voice state update: {member} {before} {after}")
+        # print(f"Voice state update: {member} {before} {after}")
         # Check if the bot should play the next item in the queue when a user leaves the voice channel
         if member == self.user and before.channel is not None:
             await self.play_next_in_queue()

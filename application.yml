@@ -11,7 +11,7 @@ lavalink:
 #      repository: "repository"
   pluginsDir: "./plugins"
   server:
-    password: "youshallnotpass"
+    password: "*#kRzdk5u#P7"
     sources:
       youtube: true
       bandcamp: true
