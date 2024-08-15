@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Access denied</title>
+    <style>
+        html, body {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+        }
+        body {
+            margin: 0;
+            padding: 20px;
+            background-color: black;
+            color: #00FF00;
+            font-family: 'Courier New';
+            font-size: 18px;
+            line-height: 1.0;
+            position: relative;
+            overflow: hidden;
+        }
+        .glow {
+            text-shadow: 0 0 5px #00b000;
+        }
+        .cursor {
+            display: inline-block;
+            width: 10px;
+            height: 20px;
+            background-color: #00FF00;
+            vertical-align: -3px;
+        }
+        .cursor-animate {
+            animation: blink 1s step-start infinite;
+        }
+        @keyframes blink {
+            50% {
+                background-color: transparent;
+            }
+        }
+        .input-line {
+            display: inline-block;
+        }
+        .flicker {
+            text-shadow: 0 0 5px #00FF00;
+            animation: flicker 0.2s infinite;
+        }
+        @keyframes flicker {
+            0%, 19%, 21%, 23%, 25%, 54%, 56%, 100% {
+                opacity: 1;
+            }
+            20%, 24%, 55% {
+                opacity: 0.4;
+            }
+        }
+        .crt {
+            position: relative;
+            overflow: hidden;
+        }
+        .crt:before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: repeating-linear-gradient(
+                0deg,
+                rgba(0, 0, 0, 0.1),
+                rgba(0, 0, 0, 0.1) 1px,
+                transparent 1px,
+                transparent 2px
+            );
+            z-index: 2;
+        }
+        .crt:after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.05);
+            backdrop-filter: blur(1px);
+            z-index: 3;
+        }
+        #terminal {
+            position: relative;
+            z-index: 1;
+        }
+        .noise {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: url('static/img/scanlines.png') repeat;
+            background-size: cover;
+            opacity: 0.1;
+            z-index: -999;
+            pointer-events: none;
+        }
+        @keyframes noise {
+            0% { transform: translate(0, 0); }
+            10% { transform: translate(-5%, -5%); }
+            20% { transform: translate(-10%, 5%); }
+            30% { transform: translate(5%, -10%); }
+            40% { transform: translate(-5%, 15%); }
+            50% { transform: translate(-10%, 5%); }
+            60% { transform: translate(15%, 0); }
+            70% { transform: translate(0, 10%); }
+            80% { transform: translate(-15%, 0); }
+            90% { transform: translate(10%, 5%); }
+            100% { transform: translate(5%, 0); }
+        }
+    </style>
+</head>
+<body>
+    <div class="glow crt">
+        <div id="terminal">
+            <span id="welcome" style="white-space: pre"></span><span class="cursor" id="cursor"></span>
+        </div>
+    </div>
+    <script>
+        const cursorElement = document.getElementById('cursor');
+        const terminalElement = document.getElementById('terminal');
+        const welcome = document.getElementById('welcome');
+        const welcomeText = "Access denied.";
+        let welcomeIndex = 0;
+
+        function typeWelcomeText() {
+            if (welcomeIndex < welcomeText.length) {
+                welcome.innerHTML += welcomeText.charAt(welcomeIndex) === '\n' ? '<br>' : welcomeText.charAt(welcomeIndex);
+                welcomeIndex++;
+                setTimeout(typeWelcomeText, 50);
+            } else {
+                cursorElement.classList.add('cursor-animate');
+            }
+        }
+
+        function applyFlickerEffect() {
+            setInterval(() => {
+                if (Math.random() < 0.1) {
+                    terminalElement.classList.add('flicker');
+                    setTimeout(() => {
+                        terminalElement.classList.remove('flicker');
+                    }, 200);
+                }
+            }, 100);
+        }
+
+        applyFlickerEffect();
+        typeWelcomeText();
+    </script>
+</body>
+</html>

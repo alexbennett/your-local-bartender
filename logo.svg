@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- Created with Inkscape (http://www.inkscape.org/) -->
+
+<svg
+   width="210mm"
+   height="297mm"
+   viewBox="0 0 210 297"
+   version="1.1"
+   id="svg1"
+   inkscape:version="1.3.2 (091e20e, 2023-11-25)"
+   sodipodi:docname="logo.svg"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <sodipodi:namedview
+     id="namedview1"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     inkscape:document-units="mm"
+     inkscape:zoom="2.3786088"
+     inkscape:cx="456.5694"
+     inkscape:cy="335.91064"
+     inkscape:window-width="1920"
+     inkscape:window-height="1027"
+     inkscape:window-x="0"
+     inkscape:window-y="25"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="layer1" />
+  <defs
+     id="defs1" />
+  <g
+     inkscape:label="Layer 1"
+     inkscape:groupmode="layer"
+     id="layer1">
+    <text
+       xml:space="preserve"
+       style="font-size:19.7556px;line-height:0;font-family:Astonpoliz;-inkscape-font-specification:Astonpoliz;letter-spacing:1.05833px;fill:none;stroke-width:1;stroke-linecap:round"
+       x="82.316071"
+       y="68.586868"
+       id="text1"><tspan
+         sodipodi:role="line"
+         id="tspan1"
+         style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-family:'Rounded Elegance';-inkscape-font-specification:'Rounded Elegance';fill:#000000;fill-opacity:1;stroke-width:1"
+         x="82.316071"
+         y="68.586868">YOUR</tspan></text>
+    <text
+       xml:space="preserve"
+       style="font-size:35.2778px;line-height:0;font-family:Astonpoliz;-inkscape-font-specification:Astonpoliz;letter-spacing:1.05833px;fill:none;stroke-width:1;stroke-linecap:round"
+       x="67.31649"
+       y="103.71523"
+       id="text1-8"><tspan
+         sodipodi:role="line"
+         id="tspan1-3"
+         style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:35.2778px;font-family:Hattinand;-inkscape-font-specification:Hattinand;fill:#000000;fill-opacity:1;stroke-width:1"
+         x="67.31649"
+         y="103.71523">Local</tspan></text>
+    <text
+       xml:space="preserve"
+       style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:19.7556px;line-height:0;font-family:Monospace;-inkscape-font-specification:Monospace;letter-spacing:1.05833px;fill:none;stroke-width:1;stroke-linecap:round"
+       x="89.635933"
+       y="125.23258"
+       id="text1-8-9"><tspan
+         sodipodi:role="line"
+         id="tspan1-3-0"
+         style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-family:'Rounded Elegance';-inkscape-font-specification:'Rounded Elegance';fill:#000000;fill-opacity:1;stroke-width:1"
+         x="89.635933"
+         y="125.23258">BAR</tspan></text>
+  </g>
+</svg>
