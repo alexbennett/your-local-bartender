@@ -470,21 +470,21 @@ class Bartender(commands.Bot):
                 input=message,
             )
 
-            response.stream_to_file("generated_audio/say.mp3")
+            response.stream_to_file("generated_audio/output.mp3")
             self._is_speaking = True
-            await self.play_file("generated_audio/say.mp3", tempo=1.0, auto_disconnect=False, auto_move_channel=False)
+            await self.play_file("generated_audio/output.mp3", tempo=1.0, auto_disconnect=False, auto_move_channel=False)
             self._is_speaking = False
         except:
             print("Failed to generate TTS audio")
 
     async def play_file(
-        self, source="generated_audio/audio.mp3", tempo=1.0, auto_disconnect=True, auto_move_channel=True
+        self, source="generated_audio/output.mp3", tempo=1.0, auto_disconnect=True, auto_move_channel=True
     ):
         """
         Plays an audio file in the voice channel.
 
         Args:
-            source (str, optional): Path to the audio file. Defaults to "./audio.mp3".
+            source (str, optional): Path to the audio file. Defaults to "./output.mp3".
             auto_disconnect (bool, optional): If True, the bot will automatically disconnect from the voice channel after playback. Defaults to True.
         """
         # Connect voice client to the "bartender" channel

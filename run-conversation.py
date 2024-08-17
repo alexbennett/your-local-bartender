@@ -1,11 +1,11 @@
 from ga import config
-from ga.llm import ConversationManager
+from ylb.llm import ConversationManager
 
 # Assume the necessary imports are made for the tools you mentioned:
-from ga.helpers.file import create_file, edit_file, read_file
-from ga.helpers.folder import list_folder, create_folder
-from ga.helpers.os import execute_bash_command
-from ga.helpers.gdrive import (
+from ylb.helpers.file import create_file, edit_file, read_file
+from ylb.helpers.folder import list_folder, create_folder
+from ylb.helpers.os import execute_bash_command
+from ylb.helpers.gdrive import (
     gdrive_find_file,
     gdrive_read_file,
     gdrive_upload_file,
@@ -16,8 +16,8 @@ from ga.helpers.gdrive import (
     gdrive_share_file,
     gdrive_create_folder,
 )
-from ga.helpers.gsheets import gsheets_read_spreadsheet, gsheets_write_spreadsheet
-from ga.helpers.gslides import (
+from ylb.helpers.gsheets import gsheets_read_spreadsheet, gsheets_write_spreadsheet
+from ylb.helpers.gslides import (
     gslides_create_presentation,
     gslides_open_presentation,
     gslides_get_slide_content,
@@ -29,7 +29,7 @@ from ga.helpers.gslides import (
     gslides_get_speaker_notes,
     gslides_update_speaker_notes,
 )
-from ga.helpers.slack import (
+from ylb.helpers.slack import (
     slack_read_messages_from_channel,
     slack_send_message_to_channel,
     slack_read_messages_from_user,
@@ -37,7 +37,7 @@ from ga.helpers.slack import (
     slack_list_channels,
     slack_list_users,
 )
-from ga.helpers.gps import (
+from ylb.helpers.gps import (
     gps_api_add_thing,
     gps_api_create_location,
     gps_api_get_companies,
@@ -57,16 +57,16 @@ from ga.helpers.gps import (
     gps_api_search_users,
     gps_api_search_thing_by_name,
 )
-from ga.helpers.openai import (
+from ylb.helpers.openai import (
     openai_read_file_into_vector_store,
     openai_get_vector_store_file_ids,
     openai_update_assistant_vector_store,
     openai_update_assistant_code_interpreter,
 )
 
-from ga.cortex.memory import remember, recall, list_short_memory, list_reminders
+from ylb.cortex.memory import remember, recall, list_short_memory, list_reminders
 
-from ga.helpers.audio import speak, listen
+from ylb.helpers.audio import speak, listen
 
 
 if __name__ == "__main__":
