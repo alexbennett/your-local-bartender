@@ -1,7 +1,7 @@
 discord:
-  default_voice_channel: "𝐭𝐡𝐞 𝐛𝐚𝐫"
+  default_voice_channel: "General"
   continuous_listen:
-    activation_phrase: "bartender"
+    activation_phrase: "binkins"
     recording_duration: 10
     pause_duration: 0.1
     sample_rate: 16000

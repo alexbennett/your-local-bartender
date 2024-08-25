@@ -8,11 +8,15 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from openai import APIError
 
+from google.cloud import firestore
+
 from ylb.utils import TextColor
 from ylb.helpers import audio
 from ylb import config
 from ylb import openai_client as client
 
+# Initialize Firestore client
+db = firestore.Client()
 
 class ConversationManager(threading.Thread):
     """
@@ -228,6 +232,35 @@ class ConversationManager(threading.Thread):
         client.beta.threads.runs.submit_tool_outputs(
             thread_id=self.thread.id, run_id=run_id, tool_outputs=tool_outputs
         )
+
+    def update_transcript(self, username, display_name, message, timestamp):
+        """
+        Updates the conversation transcript with a new message and stores it in Firestore.
+
+        Args:
+            username (str): The username of the message sender.
+            display_name (str): The display name of the message sender.
+            message (str): The content of the message.
+            timestamp (datetime): The timestamp of the message.
+        """
+        # Store transcript data in Firestore
+        doc_ref = db.collection("transcripts").document()
+        doc_ref.set(
+            {
+                "username": username,
+                "display_name": display_name,
+                "message": message,
+                "timestamp": timestamp,
+            }
+        )
+        # Update local transcript
+        self.transcript[timestamp] = {
+            "username": username,
+            "display_name": display_name,
+            "message": message,
+            "timestamp": timestamp,
+        }
+
 
     def fetch_tool_output(self, function_name, arguments):
         """
