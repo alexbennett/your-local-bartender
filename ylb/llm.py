@@ -127,7 +127,7 @@ class ConversationManager(threading.Thread):
                             listen_time = int(split_input[-1])
                             voice_input = audio.listen(listen_time)
                         else:
-                            voice_input = audio.listen(config.AUDIO_DEFAULT_DURATION)
+                            voice_input = audio.listen(config.CONTINUOUS_LISTEN_RECORDING_DURATION)
                         self.last_message = client.beta.threads.messages.create(
                             thread_id=self.thread.id,
                             role="user",

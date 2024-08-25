@@ -38,10 +38,10 @@ openapi_yaml = os.path.join(__location__, "../openapi.yaml")
 ########################
 
 # Path to config yaml
-yaml_config_path = os.path.join(__location__, "ylb-config.yaml")
+yaml_config_path = os.path.join(__location__, "../ylb-config.yaml")
 
 # Default content for config
-default_config_content = """"""
+default_config_content = """discord_default_voice_channel: 'MyVoiceChannel'"""
 
 # Check if yaml exists, if not, create it with default content
 if not os.path.exists(yaml_config_path):
@@ -86,27 +86,14 @@ SHORT_MEMORY_FILENAME = ".memory/short_memory.json"
 ###
 
 DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
-DISCORD_DEFAULT_CHANNEL = "𝐭𝐡𝐞 𝐛𝐚𝐫"
-DISCORD_TOILET_CHANNEL = "𝐭𝐡𝐞 𝐭𝐨𝐢𝐥𝐞𝐭"
-DISCORD_COUCH_CHANNEL = "𝐭𝐡𝐞 𝐜𝐨𝐮𝐜𝐡"
-
-CONTINUOUS_LISTEN_RECORDING_INTERVAL = 10
-CONTINUOUS_LISTEN_PAUSE_TIME = 0.1
-CONTINUOUS_LISTEN_ACTIVATOR = "bartender"
+DISCORD_DEFAULT_CHANNEL = config_yaml.get("discord.default_voice_channel")
+CONTINUOUS_LISTEN_RECORDING_DURATION = config_yaml.get("discord.continuous_listen.recording_duration")
+CONTINUOUS_LISTEN_PAUSE_DURATION = config_yaml.get("discord.continuous_listen.pause_duration")
+CONTINUOUS_LISTEN_ACTIVATION_PHRASE = config_yaml.get("discord.continuous_listen.activation_phrase")
+CONTINUOUS_LISTEN_SAMPLE_RATE = config_yaml.get("discord.continous_listen.sample_rate", 16000)
 
 ###
 ## End Discord configuration options
-###
-
-###
-## Begin audio configuration options
-###
-
-AUDIO_DEFAULT_SAMPLE_RATE = 16000
-AUDIO_DEFAULT_DURATION = 5
-
-###
-## End audio configuration options
 ###
 
 ###
@@ -115,15 +102,15 @@ AUDIO_DEFAULT_DURATION = 5
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 OPENAI_ORG_ID = os.getenv("OPENAI_ORGANIZATION_ID")
-OPENAI_MODEL = "gpt-4o"
-OPENAI_MODEL_TEMPERATURE = 1.0
-OPENAI_VOICE_MODEL = "whisper-1"
-OPENAI_TTS_VOICE = "nova"
-OPENAI_TTS_MODEL = "tts-1-hd"
+OPENAI_MODEL = config_yaml.get("openai.chat.model", "gpt-4o-mini")
+OPENAI_MODEL_TEMPERATURE = config_yaml.get("openai.chat.temperature", 1.0)
+OPENAI_VOICE_MODEL = config_yaml.get("openai.voice.model")
+OPENAI_TTS_VOICE = config_yaml.get("openai.voice.tts_voice")
+OPENAI_TTS_MODEL = config_yaml.get("openai.voice.tts_model")
 
 # Assistant
-OPENAI_ASSISTANT_ID = os.getenv("OPENAI_ASSISTANT_ID", None)
-OPENAI_ASSISTANT_NAME = "Binkins"
+OPENAI_ASSISTANT_ID = config_yaml.get("openai.assistant.id", None)
+OPENAI_ASSISTANT_NAME = config_yaml.get("openai.assistant.name", None)
 
 # Vector store
 OPENAI_VECTOR_STORE_ID = os.getenv("OPENAI_VECTOR_STORE_ID", None)

@@ -16,8 +16,7 @@ import wavelink
 import yt_dlp as youtube_dl
 from openai import OpenAI
 
-import config
-import utilities
+from ylb import config
 
 COMMAND_PREFIX = ">"
 COMMANDS_PIC = ">pic"
@@ -215,7 +214,7 @@ class Bartender(commands.Bot):
                 await self.read(
                     message,
                     override_phrase=tagged_transcript,
-                    respond=config.CONTINUOUS_LISTEN_ACTIVATOR in tagged_transcript.lower(),
+                    respond=config.CONTINUOUS_LISTEN_ACTIVATION_PHRASE in tagged_transcript.lower(),
                     remember=True,
                     recall=True,
                     override_author_name=user_name,
@@ -304,7 +303,7 @@ class Bartender(commands.Bot):
                     )
                     self._is_recording = True
 
-                time.sleep(config.CONTINUOUS_LISTEN_RECORDING_INTERVAL)
+                time.sleep(config.CONTINUOUS_LISTEN_RECORDING_DURATION)
 
                 if self._is_recording:
                     try:
@@ -315,7 +314,7 @@ class Bartender(commands.Bot):
                     self._voice_client.stop_recording()
                     self._is_recording = False
 
-                time.sleep(config.CONTINUOUS_LISTEN_PAUSE_TIME)
+                time.sleep(config.CONTINUOUS_LISTEN_PAUSE_DURATION)
 
             except Exception as e:
                 print(f"Error in continuous_listen: {str(e)}")
@@ -358,7 +357,7 @@ class Bartender(commands.Bot):
         messages = [
             {
                 "role": "system",
-                "content": config.RESPONSE_PROMPT_1.format(
+                "content": config.SYSTEM_PROMPT.format(
                     community_name=await self.bot_display_name(message),
                     online_users=await self.online_users(message),
                     same_channel_users=await self.users_in_voice_channel(message),
@@ -411,31 +410,6 @@ class Bartender(commands.Bot):
 
         await message.add_reaction("✅")
 
-    async def pic(self, message):
-        """
-        Generates images based on a prompt and sends them as responses in the Discord channel.
-
-        Args:
-            message (discord.Message): Discord message instance representing the pic command.
-        """
-        await message.add_reaction("🤔")
-
-        image_urls = utilities.call_image_generation_api(
-            message.content[len(COMMANDS_PIC) :], n=1, size="512x512"
-        )
-
-        await message.clear_reaction("🤔")
-        await message.add_reaction("⏬")
-
-        imgs = utilities.download_images(image_urls, "generated_images")
-
-        await message.clear_reaction("⏬")
-
-        for img in imgs:
-            await message.reply(file=discord.File(img))
-
-        await message.add_reaction("✅")
-
     async def say(self, message):
         """
         Generates TTS audio from a text message using OpenAI's Text-to-Speech API and plays it in the voice channel.
@@ -465,7 +439,7 @@ class Bartender(commands.Bot):
         """
         try:
             response = client.audio.speech.create(
-                model="tts-1-hd",
+                model=config.OPENAI_VOICE_MODEL,
                 voice=config.OPENAI_TTS_VOICE,
                 input=message,
             )
@@ -643,13 +617,6 @@ class Bartender(commands.Bot):
             except:
                 await message.add_reaction("❌")
                 print("Unable to read")
-        elif message.content.startswith(COMMANDS_PROG):
-            print(f"Handling PROG")
-            try:
-                await self.prog(message, respond=True, remember=True, recall=True)
-            except:
-                await message.add_reaction("❌")
-                print("Unable to prog")
         elif message.content.startswith(COMMANDS_PIC):
             print(f"Handling PIC")
             try:

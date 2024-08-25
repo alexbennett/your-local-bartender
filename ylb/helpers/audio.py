@@ -12,7 +12,7 @@ from typing import Optional
 
 
 @utils.function_info
-def listen(duration: Optional[int] = config.AUDIO_DEFAULT_DURATION) -> str:
+def listen(duration: Optional[int] = config.CONTINUOUS_LISTEN_RECORDING_DURATION) -> str:
     """
     Record microphone audio for the specified duration and return the transcribed text.
 
@@ -22,20 +22,20 @@ def listen(duration: Optional[int] = config.AUDIO_DEFAULT_DURATION) -> str:
     :rtype: string
     """
     if duration is None:
-        duration = config.AUDIO_DEFAULT_DURATION
+        duration = config.CONTINUOUS_LISTEN_RECORDING_DURATION
     logging.warning(
         f"{TextColor.FAIL}{TextColor.BOLD}🔴 Recording audio for {duration} seconds...{TextColor.ENDC}"
     )
     audio = sd.rec(
-        int(config.AUDIO_DEFAULT_SAMPLE_RATE * duration),
-        samplerate=config.AUDIO_DEFAULT_SAMPLE_RATE,
+        int(config.CONTINUOUS_LISTEN_SAMPLE_RATE * duration),
+        samplerate=config.CONTINUOUS_LISTEN_SAMPLE_RATE,
         channels=1,
     )
     sd.wait()
     audio = np.squeeze(audio)
     audio = (audio * 32767).astype(np.int16)
     filename = ".memory/request.wav"
-    wavfile.write(filename, config.AUDIO_DEFAULT_SAMPLE_RATE, audio)
+    wavfile.write(filename, config.CONTINUOUS_LISTEN_SAMPLE_RATE, audio)
 
     with open(filename, "rb") as audio_file:
         transcript = client.audio.transcriptions.create(
