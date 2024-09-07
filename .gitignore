@@ -1,12 +1,15 @@
 # Credentials
 .credentials/
-.vscode/ 
+.vscode/
 
 # Generated files
 generated_images/
 generated_audio/
 downloaded_songs/
 downloaded_pages/
+
+# MacOS
+.DS_Store
 
 # Logs
 logs/
