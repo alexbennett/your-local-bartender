@@ -23,8 +23,14 @@ from ylb.helpers.openai import (
     openai_update_assistant_vector_store,
     openai_update_assistant_code_interpreter,
 )
+from ylb import utils
 
-TOOLS = [openai_get_vector_store_file_ids, openai_read_file_into_vector_store, openai_update_assistant_code_interpreter,openai_update_assistant_vector_store]
+TOOLS = [
+    openai_get_vector_store_file_ids,
+    openai_read_file_into_vector_store,
+    openai_update_assistant_code_interpreter,
+    openai_update_assistant_vector_store,
+]
 
 COMMAND_PREFIX = "!"
 COMMANDS_PIC = "!pic"
@@ -69,7 +75,6 @@ class Bartender(commands.Bot):
         self.pool = mafic.NodePool(self)
         self.listen_thread = None
         self.conversation_manager = None  # Add this line
-
 
         self.loop.create_task(self.add_nodes())
 
@@ -195,7 +200,13 @@ class Bartender(commands.Bot):
         # Start the ConversationManager in a separate thread
         if self.conversation_manager is None:
             self.conversation_manager = ConversationManager(
-                tools=TOOLS
+                tools=[
+                    self.get_last_x_messages,
+                    self.get_online_users,
+                    self.get_bot_display_name,
+                    self.get_users_in_voice_channel,
+                ]
+                + TOOLS
             )  # Pass the Firestore client
             self.conversation_thread = threading.Thread(
                 target=self.conversation_manager.run
@@ -672,6 +683,80 @@ class Bartender(commands.Bot):
             ]
         )
         await message.reply(f"Upcoming queue:\n{queue_info}")
+
+    @utils.function_info
+    async def get_last_x_messages(channel_id: int, x: int):
+        """
+        Retrieves the last X messages from a specified text channel.
+
+        :param channel_id: The ID of the Discord text channel.
+        :type channel_id: int
+        :param x: The number of last messages to retrieve.
+        :type x: int
+        :return: A dictionary where keys are sender display names and values are sender messages.
+        :rtype: dict
+        """
+        channel = discord.utils.get(bot.get_all_channels(), id=channel_id)
+        if channel is None:
+            return {}
+
+        messages = await channel.history(limit=x).flatten()
+        message_dict = {message.author.name: message.content for message in messages}
+        return message_dict
+
+    @utils.function_info
+    async def get_online_users(guild_id: int):
+        """
+        Gets a list of online users from the specified guild.
+
+        :param guild_id: The ID of the Discord guild.
+        :type guild_id: int
+        :return: A list of display names of online users.
+        :rtype: list
+        """
+        guild = discord.utils.get(bot.guilds, id=guild_id)
+        if guild is None:
+            return []
+
+        online_members = [
+            member.display_name
+            for member in guild.members
+            if member.status == discord.Status.online
+        ]
+        return online_members
+
+    @utils.function_info
+    async def get_bot_display_name(guild_id: int):
+        """
+        Gets the display name of the bot in the specified guild.
+
+        :param guild_id: The ID of the Discord guild.
+        :type guild_id: int
+        :return: The bot's display name in the guild.
+        :rtype: str
+        """
+        guild = discord.utils.get(bot.guilds, id=guild_id)
+        if guild is None:
+            return "Bartender"
+
+        bot_member = guild.get_member(bot.user.id)
+        return bot_member.display_name if bot_member else "Bartender"
+
+    @utils.function_info
+    async def get_users_in_voice_channel(channel_id: int):
+        """
+        Gets a list of user display names in the specified voice channel.
+
+        :param channel_id: The ID of the Discord voice channel.
+        :type channel_id: int
+        :return: A list of display names of users in the same voice channel, or None if the channel is not found.
+        :rtype: list
+        """
+        channel = discord.utils.get(bot.get_all_channels(), id=channel_id)
+        if channel is None or not isinstance(channel, discord.VoiceChannel):
+            return None
+
+        return [member.display_name for member in channel.members]
 
     async def on_ready(self):
         """Event handler that runs when the bot is ready."""

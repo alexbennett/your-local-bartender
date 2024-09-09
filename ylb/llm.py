@@ -151,7 +151,7 @@ class ConversationManager(threading.Thread):
                     tool_choice="auto",
                 )
                 while True:
-                    # time.sleep(0.01)
+                    time.sleep(0.01)
                     run = client.beta.threads.runs.retrieve(
                         thread_id=self.thread.id, run_id=run.id
                     )
