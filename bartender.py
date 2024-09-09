@@ -464,7 +464,7 @@ class Bartender(commands.Bot):
             )
 
         # Add new message to queue
-        messages.append(dict(role="user", content=f"[**{author_name}:** {phrase}"))
+        messages.append(dict(role="user", content=f"**{author_name}:** {phrase}"))
 
         # Get response from OpenAI asynchronously
         if respond:
@@ -851,10 +851,7 @@ class Bartender(commands.Bot):
             before (discord.VoiceState): The voice state before the change.
             after (discord.VoiceState): The voice state after the change.
         """
-        # print(f"Voice state update: {member} {before} {after}")
-        # Check if the bot should play the next item in the queue when a user leaves the voice channel
-        if member == self.user and before.channel is not None:
-            await self.play_next_in_queue()
+        print(f"Voice state update: {member} {before} {after}")
 
     async def on_wavelink_node_ready(node: wavelink.Node):
         """
@@ -863,7 +860,7 @@ class Bartender(commands.Bot):
         Args:
             node (wavelink.Node): The Wavelink node that is now ready.
         """
-        print(f"{node.identifier} is ready.")  # print a message
+        print(f"{node.identifier} is ready")  # print a message
 
 
 if __name__ == "__main__":

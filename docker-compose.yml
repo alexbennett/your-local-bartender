@@ -1,0 +1,30 @@
+version: '3.8'
+
+services:
+  lavalink:
+    image: openjdk:17-slim
+    container_name: lavalink
+    working_dir: /app
+    volumes:
+      - ./Lavalink.jar:/app/Lavalink.jar
+      - ./application.yaml:/app/application.yaml
+    ports:
+      - "2333:2333"  # Expose Lavalink port
+    command: ["java", "-jar", "Lavalink.jar"]
+
+  bartender:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: bartender
+    depends_on:
+      - lavalink
+    working_dir: /app
+    volumes:
+      - .:/app
+    environment:
+      PYTHONUNBUFFERED: 1
+      PYTHONDONTWRITEBYTECODE: 1
+    ports:
+      - "8080:8080"  # Expose the bot's port if necessary
+    command: ["python3", "bartender.py"]
