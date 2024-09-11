@@ -15,6 +15,7 @@ from ylb import config
 from ylb import utils
 from ylb.utils import TextColor
 from ylb import openai_client as client
+from google.cloud import firestore
 
 from ylb.helpers.openai import (
     openai_read_file_into_vector_store,
@@ -30,6 +31,8 @@ COMMANDS_JOIN = "!join"
 
 r = sr.Recognizer()
 
+# Initialize Firestore
+db = firestore.Client()
 
 class Bartender(commands.Bot):
     """
@@ -91,26 +94,31 @@ class Bartender(commands.Bot):
             print(f"Failed to initialize assistant: {str(e)}")
             exit(1)
 
-        self.pool = mafic.NodePool(self)
         self.listen_thread = None
         self.assistant_thread = None
         self.assistant = client.beta.assistants.retrieve(config.OPENAI_ASSISTANT_ID)
         self.current_thread = None
         self.text_logging_thread = None
-        self.loop.create_task(self.add_nodes())
-
-    async def add_nodes(self):
-        """Asynchronously adds a node to the Mafic node pool."""
-        await self.pool.create_node(
-            host="127.0.0.1",
-            port=2333,
-            label="MAIN",
-            password="*#kRzdk5u#P7",
-        )
+        self.session_doc_ref = None
 
     async def on_ready(self):
         """Event handler that runs when the bot is ready."""
         print(f"Logged in as {self.user.name}")
+        # Gather guild information on login
+        for guild in self.guilds:
+            await self.store_guild_info(guild)
+
+    async def store_guild_info(self, guild):
+        """Stores guild information in Firestore."""
+        users = [member.id for member in guild.members]
+        doc_ref = db.collection("instances").document(str(guild.id))
+        doc_ref.set(
+            {
+                "id": str(guild.id),
+                "server_name": guild.name,
+                "users": users,
+            }
+        )
 
     async def on_message(self, message):
         """
@@ -154,14 +162,32 @@ class Bartender(commands.Bot):
         else:
             self._voice_client = await channel.connect()
 
+        # Create a new Firestore document for the session
+        self.session_doc_ref = db.collection("sessions").document()
+        self.session_doc_ref.set(
+            {
+                "id": self.session_doc_ref.id,
+                "openai_assistant_id": config.OPENAI_ASSISTANT_ID,
+                "discord_guild_id": message.guild.id,
+                "discord_message_id": message.id,
+                "current_thread": self.current_thread.id,
+                "created_at": firestore.SERVER_TIMESTAMP,
+                "updated_at": firestore.SERVER_TIMESTAMP,
+                "instruction_prompt": config.INSTRUCTION_PROMPT,
+                "temperature": config.OPENAI_MODEL_TEMPERATURE,
+            }
+        )
+
         # Check if a text logging thread already exists
         if self.text_logging_thread and not self.text_logging_thread.archived:
-            await self.text_logging_thread.send(content=f"Joining voice channel: {channel.name}")
+            await self.text_logging_thread.send(
+                content=f"Joining voice channel: {channel.name}"
+            )
         else:
             # Create a new message thread in the voice channel for logging assistant responses
             self.text_logging_thread = await message.channel.create_thread(
-            name=f"Assistant Log - {channel.name}",
-            auto_archive_duration=60,
+                name=f"Assistant Log - {channel.name}",
+                auto_archive_duration=60,
             )
 
         # Prepare the assistant's pre-prompt for the conversation
@@ -177,7 +203,7 @@ class Bartender(commands.Bot):
             thread_id=self.current_thread.id, role="user", content=start_prompt
         )
 
-        # Create a thread to run the continuous recording loop
+        # Start the continuous recording loop
         self.listen_thread = threading.Thread(
             target=self.continuous_listen, args=(message.channel,)
         )
@@ -236,13 +262,24 @@ class Bartender(commands.Bot):
             if user_name:
                 transcript = await self.process_audio_stream(user_name, audio)
 
-                # Log the transcript the text logging thread
+                # Log the transcript in the text logging thread
                 if self.text_logging_thread:
                     await self.text_logging_thread.send(content=transcript)
 
                 # Add the transcript as a message to the assistant thread
                 client.beta.threads.messages.create(
                     thread_id=self.current_thread.id, role="user", content=transcript
+                )
+
+                # Store the message in the Firestore subcollection
+                self.session_doc_ref.collection("messages").add(
+                    {
+                        "openai_thread_id": self.current_thread.id,
+                        "openai_message_id": None,
+                        "content": transcript,
+                        "timestamp": firestore.SERVER_TIMESTAMP,
+                        "tool_call": None,
+                    }
                 )
 
                 # Poll the assistant for a response
@@ -260,8 +297,7 @@ class Bartender(commands.Bot):
                     )
                     if run.status == "completed":
                         messages = client.beta.threads.messages.list(
-                            thread_id=self.current_thread.id,
-                            limit=1,
+                            thread_id=self.current_thread.id, limit=1
                         )
                         for message in messages:
                             if message.role == "assistant":
@@ -272,11 +308,25 @@ class Bartender(commands.Bot):
                                     await self.say_and_log(
                                         message.content[0].text.value
                                     )
+
+                                    # Store the assistant message in the Firestore subcollection
+                                    self.session_doc_ref.collection(
+                                        "messages"
+                                    ).add(
+                                        {
+                                            "openai_thread_id": self.current_thread.id,
+                                            "openai_message_id": message.id,
+                                            "content": message.content[0].text.value,
+                                            "timestamp": firestore.SERVER_TIMESTAMP,
+                                            "tool_call": None,
+                                        }
+                                    )
                                 except Exception:
                                     print(
-                                        "Failed to print assistant message: %s", message
+                                        "Failed to print assistant message: %s",
+                                        message,
                                     )
-                                break
+                                    break
                         print(f"Run {run.id} completed")
                         break
                     elif run.status == "requires_action":
@@ -307,23 +357,41 @@ class Bartender(commands.Bot):
                         self.fetch_tool_output,
                         tool_call.function.name,
                         json.loads(tool_call.function.arguments),
-                    ): tool_call.id
+                    ): tool_call
                     for tool_call in tool_calls
                 }
                 for future in as_completed(future_to_tool_call):
-                    tool_call_id = future_to_tool_call[future]
+                    tool_call = future_to_tool_call[future]
                     try:
                         output = future.result()
                         tool_outputs.append(
-                            {"tool_call_id": tool_call_id, "output": output}
+                            {"tool_call_id": tool_call.id, "output": output}
+                        )
+
+                        # Store the tool call in the Firestore subcollection
+                        self.session_doc_ref.collection("messages").add(
+                            {
+                                "openai_thread_id": self.current_thread.id,
+                                "openai_message_id": None,
+                                "content": None,
+                                "timestamp": firestore.SERVER_TIMESTAMP,
+                                "tool_call": {
+                                    "tool_call_id": tool_call.id,
+                                    "function_name": tool_call.function.name,
+                                    "arguments": json.loads(
+                                        tool_call.function.arguments
+                                    ),
+                                    "output": output,
+                                },
+                            }
                         )
                     except Exception as e:
                         logging.error(
-                            f"Error during tool call {tool_call_id}: {str(e)}\n{traceback.format_exc()}"
+                            f"Error during tool call {tool_call.id}: {str(e)}\n{traceback.format_exc()}"
                         )
                         tool_outputs.append(
                             {
-                                "tool_call_id": tool_call_id,
+                                "tool_call_id": tool_call.id,
                                 "output": f"Error during tool call: {str(e)}\n{traceback.format_exc()}",
                             }
                         )
@@ -426,7 +494,9 @@ class Bartender(commands.Bot):
                 )
             elif os.name == "posix":
                 audio = discord.FFmpegPCMAudio(
-                    executable="ffmpeg", source=filename, options=f'-af "atempo=1.0" -v "quiet"'
+                    executable="ffmpeg",
+                    source=filename,
+                    options=f'-af "atempo=1.0" -v "quiet"',
                 )
 
             # Play the audio file using FFmpeg
@@ -511,69 +581,6 @@ class Bartender(commands.Bot):
             return None
 
         return [member.display_name for member in channel.members]
-
-    async def play_youtube(self, message):
-        """
-        Downloads and queues audio from a YouTube video.
-
-        Args:
-            message (discord.Message): The message containing the YouTube URL or query.
-        """
-        url_or_query = message.content[len(COMMANDS_PLAY) + 1 :].strip()
-        await message.add_reaction("🔍")
-
-        with youtube_dl.YoutubeDL(
-            {"default_search": "ytsearch1:", "quiet": True}
-        ) as ydl:
-            info = ydl.extract_info(url_or_query, download=False)
-            url = info["entries"][0]["webpage_url"]
-            title = info["entries"][0]["title"]
-
-        filename = f"downloaded_songs/{title}"
-        ydl_opts = {
-            "format": "bestaudio/best",
-            "postprocessors": [
-                {
-                    "key": "FFmpegExtractAudio",
-                    "preferredcodec": "mp3",
-                    "preferredquality": "192",
-                }
-            ],
-            "outtmpl": filename,
-            "quiet": True,
-        }
-
-        await message.clear_reaction("🔍")
-        await message.add_reaction("⏬")
-
-        with youtube_dl.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([url])
-
-        await message.clear_reaction("⏬")
-        self._queue.append((message, title, url, filename + ".mp3"))
-
-        if not self._voice_client or not self._voice_client.is_connected():
-            await self.play_next_in_queue()
-        else:
-            await message.reply(f"_{title}_ ({url}) added to queue...")
-
-    async def play_next_in_queue(self):
-        """Plays the next item in the queue and manages reactions."""
-        if self._queue:
-            message, title, url, next_item = self._queue.pop(0)
-            await message.add_reaction("🎵")
-            await message.reply(f"Now playing _{title}_ {url}")
-            await self.play_file(next_item)
-            await message.clear_reaction("🎵")
-            await message.add_reaction("✅")
-
-    async def play_file(self, source):
-        """Plays an audio file in a voice channel."""
-        audio = discord.FFmpegPCMAudio(source)
-        self._voice_client.play(audio)
-
-        while self._voice_client.is_playing():
-            await asyncio.sleep(1)
 
 
 if __name__ == "__main__":
