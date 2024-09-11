@@ -87,9 +87,9 @@ SHORT_MEMORY_FILENAME = ".memory/short_memory.json"
 
 DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 DISCORD_DEFAULT_CHANNEL = config_yaml.get("discord.default_voice_channel")
-CONTINUOUS_LISTEN_RECORDING_DURATION = config_yaml.get("discord.continuous_listen.recording_duration")
-CONTINUOUS_LISTEN_PAUSE_DURATION = config_yaml.get("discord.continuous_listen.pause_duration")
-CONTINUOUS_LISTEN_ACTIVATION_PHRASE = config_yaml.get("discord.continuous_listen.activation_phrase")
+CONTINUOUS_LISTEN_RECORDING_DURATION = config_yaml.get("discord.continuous_listen.recording_duration", 30)
+CONTINUOUS_LISTEN_PAUSE_DURATION = config_yaml.get("discord.continuous_listen.pause_duration", 0.1)
+CONTINUOUS_LISTEN_ACTIVATION_PHRASE = config_yaml.get("discord.continuous_listen.activation_phrase", "binkins")
 CONTINUOUS_LISTEN_SAMPLE_RATE = config_yaml.get("discord.continous_listen.sample_rate", 16000)
 
 ###
@@ -104,16 +104,16 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 OPENAI_ORG_ID = os.getenv("OPENAI_ORGANIZATION_ID")
 OPENAI_MODEL = config_yaml.get("openai.chat.model", "gpt-4o-mini")
 OPENAI_MODEL_TEMPERATURE = config_yaml.get("openai.chat.temperature", 1.0)
-OPENAI_VOICE_MODEL = config_yaml.get("openai.voice.model")
-OPENAI_TTS_VOICE = config_yaml.get("openai.voice.tts_voice")
-OPENAI_TTS_MODEL = config_yaml.get("openai.voice.tts_model")
+OPENAI_VOICE_MODEL = config_yaml.get("openai.voice.model", "whisper-1")
+OPENAI_TTS_VOICE = config_yaml.get("openai.voice.tts_voice", "echo")
+OPENAI_TTS_MODEL = config_yaml.get("openai.voice.tts_model", "tts-1-hd")
 
 # Assistant
-OPENAI_ASSISTANT_ID = config_yaml.get("openai.assistant.id", None)
+OPENAI_ASSISTANT_ID = config_yaml.get("openai.assistant.id", "asst_ZUgOFB1c8RyXse4q888oTo5D")
 OPENAI_ASSISTANT_NAME = config_yaml.get("openai.assistant.name", None)
 
 # Vector store
-OPENAI_VECTOR_STORE_ID = os.getenv("OPENAI_VECTOR_STORE_ID", None)
+OPENAI_VECTOR_STORE_ID = config_yaml.get("openai.vector_store.id", "vs_dfpknpKmECiqIvaxAlo0bxuh")
 
 OPENAI_DEFAULT_PROMPT = "Let's have a voice conversation. You start by asking me what to discuss. Allow me 10 seconds to respond."
 

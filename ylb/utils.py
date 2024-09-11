@@ -3,6 +3,7 @@ import ast
 import tiktoken
 import os
 import re
+import textwrap
 
 
 class TextColor:
@@ -158,6 +159,9 @@ class FunctionWrapper:
     def extract_function_info(self):
         """Extracts and stores information about the given function"""
         source = inspect.getsource(self.func)
+
+        # Use textwrap.dedent() to remove any extra indentation
+        source = textwrap.dedent(source)
         tree = ast.parse(source)
 
         # Extract function name
