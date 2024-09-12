@@ -33,6 +33,7 @@ r = sr.Recognizer()
 # Initialize Firestore
 db = firestore.Client()
 
+
 class Bartender(commands.Bot):
     """
     Discord bot acting as an AI-powered assistant in voice channels.
@@ -212,9 +213,7 @@ class Bartender(commands.Bot):
         while True:
             try:
                 if not self._voice_client.is_connected():
-                    print(
-                        "Voice client is not connected, exiting continuous_listen"
-                    )
+                    print("Voice client is not connected, exiting continuous_listen")
                     break
 
                 if not self._is_recording:
@@ -294,14 +293,10 @@ class Bartender(commands.Bot):
                                     print(
                                         f"\n{TextColor.BOLD}{TextColor.OKGREEN}{TextColor.BOLD}[💭] {message.content[0].text.value}{TextColor.ENDC}\n"
                                     )
-                                    await self.speak(
-                                        message.content[0].text.value
-                                    )
+                                    await self.speak(message.content[0].text.value)
 
                                     # Store the assistant message in the Firestore subcollection
-                                    self.session_doc_ref.collection(
-                                        "messages"
-                                    ).add(
+                                    self.session_doc_ref.collection("messages").add(
                                         {
                                             "openai_thread_id": self.current_thread.id,
                                             "openai_message_id": message.id,
@@ -346,7 +341,11 @@ class Bartender(commands.Bot):
                         self.fetch_tool_output,
                         tool_call.function.name,
                         json.loads(tool_call.function.arguments),
-                    ): (tool_call.id, tool_call.function.name, tool_call.function.arguments)
+                    ): (
+                        tool_call.id,
+                        tool_call.function.name,
+                        tool_call.function.arguments,
+                    )
                     for tool_call in tool_calls
                 }
                 for future in as_completed(future_to_tool_call):
@@ -367,9 +366,7 @@ class Bartender(commands.Bot):
                                 "tool_call": {
                                     "tool_call_id": tool_call_id,
                                     "function_name": fname,
-                                    "arguments": json.loads(
-                                        fargs
-                                    ),
+                                    "arguments": json.loads(fargs),
                                     "output": output,
                                 },
                             }
@@ -426,7 +423,6 @@ def fetch_tool_output(self, function_name, arguments):
                 return f"Error during tool call: {str(e)}\n{traceback.format_exc()}"
     logging.error(f"Tool function '{function_name}' not found.")
     return f"Error: Tool function '{function_name}' not found."
-
 
     async def get_username_from_id(self, user_id, guild):
         """
