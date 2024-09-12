@@ -3,9 +3,8 @@ import asyncio
 import time
 import threading
 import speech_recognition as sr
+import inspect
 import json
-import mafic
-import yt_dlp as youtube_dl
 import logging
 import discord
 from discord.ext import commands
@@ -45,10 +44,13 @@ class Bartender(commands.Bot):
         self._is_recording = False
         self._voice_client = None
         self._tools = [
-            self.get_last_x_messages,
             self.get_online_users,
             self.get_bot_display_name,
             self.get_users_in_voice_channel,
+            self.update_bot_display_name,
+            self.send_message_to_channel,
+            self.send_reply_to_message,
+            self.send_message_reaction,
         ] + extra_tools
 
         try:
@@ -98,7 +100,6 @@ class Bartender(commands.Bot):
         self.assistant_thread = None
         self.assistant = client.beta.assistants.retrieve(config.OPENAI_ASSISTANT_ID)
         self.current_thread = None
-        self.text_logging_thread = None
         self.session_doc_ref = None
 
     async def on_ready(self):
@@ -114,7 +115,7 @@ class Bartender(commands.Bot):
         doc_ref = db.collection("instances").document(str(guild.id))
         doc_ref.set(
             {
-                "id": str(guild.id),
+                "guild_id": str(guild.id),
                 "server_name": guild.name,
                 "users": users,
             }
@@ -139,7 +140,9 @@ class Bartender(commands.Bot):
             try:
                 await self.join(message)
             except Exception as e:
-                print(f"Error while listening in voice channel: {e}")
+                print(
+                    f"Error while listening in voice channel: {e}{traceback.format_exc()}"
+                )
                 if self._voice_client:
                     await self._voice_client.disconnect()
 
@@ -162,6 +165,19 @@ class Bartender(commands.Bot):
         else:
             self._voice_client = await channel.connect()
 
+        # Create a new thread for the assistant
+        self.current_thread = client.beta.threads.create()
+
+        # Prepare the assistant's pre-prompt for the conversation
+        start_prompt = (
+            f"You are now participating in a voice conversation in the Discord server '{message.guild.name}' "
+            f"and voice channel '{channel.name}' (id: {channel.id}). The conversation was started by '{message.author.display_name}'."
+        )
+        # Start the conversation thread with the assistant
+        client.beta.threads.messages.create(
+            thread_id=self.current_thread.id, role="user", content=start_prompt
+        )
+
         # Create a new Firestore document for the session
         self.session_doc_ref = db.collection("sessions").document()
         self.session_doc_ref.set(
@@ -170,37 +186,12 @@ class Bartender(commands.Bot):
                 "openai_assistant_id": config.OPENAI_ASSISTANT_ID,
                 "discord_guild_id": message.guild.id,
                 "discord_message_id": message.id,
-                "current_thread": self.current_thread.id,
+                "openai_thread_id": self.current_thread.id,
                 "created_at": firestore.SERVER_TIMESTAMP,
                 "updated_at": firestore.SERVER_TIMESTAMP,
                 "instruction_prompt": config.INSTRUCTION_PROMPT,
                 "temperature": config.OPENAI_MODEL_TEMPERATURE,
             }
-        )
-
-        # Check if a text logging thread already exists
-        if self.text_logging_thread and not self.text_logging_thread.archived:
-            await self.text_logging_thread.send(
-                content=f"Joining voice channel: {channel.name}"
-            )
-        else:
-            # Create a new message thread in the voice channel for logging assistant responses
-            self.text_logging_thread = await message.channel.create_thread(
-                name=f"Assistant Log - {channel.name}",
-                auto_archive_duration=60,
-            )
-
-        # Prepare the assistant's pre-prompt for the conversation
-        users = ", ".join([member.display_name for member in channel.members])
-        self.current_thread = client.beta.threads.create()
-        start_prompt = (
-            f"The assistant is now participating in a voice conversation in the Discord server '{message.guild.name}' "
-            f"and voice channel '{channel.name}'. Users in the channel include: {users}. The conversation was started "
-            f"by '{message.author.display_name}'."
-        )
-        # Start the conversation thread with the assistant
-        client.beta.threads.messages.create(
-            thread_id=self.current_thread.id, role="user", content=start_prompt
         )
 
         # Start the continuous recording loop
@@ -221,7 +212,9 @@ class Bartender(commands.Bot):
         while True:
             try:
                 if not self._voice_client.is_connected():
-                    print("Voice client is not connected, exiting continuous_listen")
+                    print(
+                        "Voice client is not connected, exiting continuous_listen"
+                    )
                     break
 
                 if not self._is_recording:
@@ -262,10 +255,6 @@ class Bartender(commands.Bot):
             if user_name:
                 transcript = await self.process_audio_stream(user_name, audio)
 
-                # Log the transcript in the text logging thread
-                if self.text_logging_thread:
-                    await self.text_logging_thread.send(content=transcript)
-
                 # Add the transcript as a message to the assistant thread
                 client.beta.threads.messages.create(
                     thread_id=self.current_thread.id, role="user", content=transcript
@@ -291,7 +280,7 @@ class Bartender(commands.Bot):
                 )
 
                 while True:
-                    time.sleep(0.01)
+                    time.sleep(0.1)
                     run = client.beta.threads.runs.retrieve(
                         thread_id=self.current_thread.id, run_id=run.id
                     )
@@ -305,7 +294,7 @@ class Bartender(commands.Bot):
                                     print(
                                         f"\n{TextColor.BOLD}{TextColor.OKGREEN}{TextColor.BOLD}[💭] {message.content[0].text.value}{TextColor.ENDC}\n"
                                     )
-                                    await self.say_and_log(
+                                    await self.speak(
                                         message.content[0].text.value
                                     )
 
@@ -357,15 +346,15 @@ class Bartender(commands.Bot):
                         self.fetch_tool_output,
                         tool_call.function.name,
                         json.loads(tool_call.function.arguments),
-                    ): tool_call
+                    ): (tool_call.id, tool_call.function.name, tool_call.function.arguments)
                     for tool_call in tool_calls
                 }
                 for future in as_completed(future_to_tool_call):
-                    tool_call = future_to_tool_call[future]
+                    tool_call_id, fname, fargs = future_to_tool_call[future]
                     try:
                         output = future.result()
                         tool_outputs.append(
-                            {"tool_call_id": tool_call.id, "output": output}
+                            {"tool_call_id": tool_call_id, "output": output}
                         )
 
                         # Store the tool call in the Firestore subcollection
@@ -376,10 +365,10 @@ class Bartender(commands.Bot):
                                 "content": None,
                                 "timestamp": firestore.SERVER_TIMESTAMP,
                                 "tool_call": {
-                                    "tool_call_id": tool_call.id,
-                                    "function_name": tool_call.function.name,
+                                    "tool_call_id": tool_call_id,
+                                    "function_name": fname,
                                     "arguments": json.loads(
-                                        tool_call.function.arguments
+                                        fargs
                                     ),
                                     "output": output,
                                 },
@@ -387,11 +376,11 @@ class Bartender(commands.Bot):
                         )
                     except Exception as e:
                         logging.error(
-                            f"Error during tool call {tool_call.id}: {str(e)}\n{traceback.format_exc()}"
+                            f"Error during tool call {tool_call_id}: {str(e)}\n{traceback.format_exc()}"
                         )
                         tool_outputs.append(
                             {
-                                "tool_call_id": tool_call.id,
+                                "tool_call_id": tool_call_id,
                                 "output": f"Error during tool call: {str(e)}\n{traceback.format_exc()}",
                             }
                         )
@@ -402,32 +391,42 @@ class Bartender(commands.Bot):
             thread_id=self.current_thread.id, run_id=run_id, tool_outputs=tool_outputs
         )
 
-    def fetch_tool_output(self, function_name, arguments):
-        """
-        Simulates fetching outputs for function calls.
 
-        Parameters:
-        - function_name (str): The name of the function to call.
-        - arguments (str): The arguments to pass to the function as a JSON string.
+def fetch_tool_output(self, function_name, arguments):
+    """
+    Fetches outputs for function calls, handling both async and sync functions.
 
-        Returns:
-        - The response from the function call.
-        """
-        logging.warning(
-            f"Processing tool call...\n{TextColor.HEADER}{function_name}({json.dumps(arguments, indent=2)}){TextColor.ENDC}"
-        )
-        for tool in self._tools:
-            if tool.info["function"]["name"] == function_name:
-                try:
+    Parameters:
+    - function_name (str): The name of the function to call.
+    - arguments (dict): The arguments to pass to the function.
+
+    Returns:
+    - The response from the function call.
+    """
+    logging.warning(
+        f"Processing tool call...\n{TextColor.HEADER}{function_name}({json.dumps(arguments, indent=2)}){TextColor.ENDC}"
+    )
+    for tool in self._tools:
+        if tool.info["function"]["name"] == function_name:
+            try:
+                # Check if the tool function is async
+                if inspect.iscoroutinefunction(tool):
+                    # If async, use asyncio.run() to execute it
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    function_response = loop.run_until_complete(tool(**arguments))
+                else:
+                    # If sync, call directly
                     function_response = tool(**arguments)
-                    return str(function_response)
-                except Exception as e:
-                    logging.error(
-                        f"Error during tool call: {str(e)}\n{traceback.format_exc()}"
-                    )
-                    return f"Error during tool call: {str(e)}\n{traceback.format_exc()}"
-        logging.error(f"Tool function '{function_name}' not found.")
-        return f"Error: Tool function '{function_name}' not found."
+                return str(function_response)
+            except Exception as e:
+                logging.error(
+                    f"Error during tool call: {str(e)}\n{traceback.format_exc()}"
+                )
+                return f"Error during tool call: {str(e)}\n{traceback.format_exc()}"
+    logging.error(f"Tool function '{function_name}' not found.")
+    return f"Error: Tool function '{function_name}' not found."
+
 
     async def get_username_from_id(self, user_id, guild):
         """
@@ -470,12 +469,13 @@ class Bartender(commands.Bot):
         print(f"[{user_name}]: {transcript}")
         return f"{user_name}: {transcript}"
 
-    async def say_and_log(self, message):
+    @utils.function_info
+    async def speak(self, message):
         """
-        Plays the assistant's response in the voice channel and logs it to the text thread.
+        Play the assistant's response in the voice channel and log it to the text thread.
 
-        Args:
-            message (str): The assistant's response text.
+        :param message: The assistant's response text.
+        :type message: str
         """
         try:
             filename = "generated_audio/output.mp3"
@@ -490,7 +490,7 @@ class Bartender(commands.Bot):
                 audio = discord.FFmpegPCMAudio(
                     executable="c:/ffmpeg/bin/ffmpeg.exe",
                     source=filename,
-                    options=f'-af "atempo={tempo}" -v "quiet"',
+                    options=f'-af "atempo=1.0" -v "quiet"',
                 )
             elif os.name == "posix":
                 audio = discord.FFmpegPCMAudio(
@@ -505,34 +505,11 @@ class Bartender(commands.Bot):
             # Wait for playback to finish
             while self._voice_client.is_playing():
                 await asyncio.sleep(1)
-
-            # Log the assistant's response in the text logging thread
-            if self.text_logging_thread:
-                await self.text_logging_thread.send(content=message)
         except Exception as e:
             print(f"Failed to generate TTS audio: {e}")
 
     @utils.function_info
-    async def get_last_x_messages(channel_id: int, x: int):
-        """Retrieves the last X messages from a specified text channel.
-
-        :param channel_id: The ID of the Discord text channel.
-        :type channel_id: integer
-        :param x: The number of last messages to retrieve.
-        :type x: integer
-        :return: A dictionary where keys are sender display names and values are sender messages.
-        :rtype: dictionary
-        """
-        channel = discord.utils.get(bot.get_all_channels(), id=channel_id)
-        if channel is None:
-            return {}
-
-        messages = await channel.history(limit=x).flatten()
-        message_dict = {message.author.name: message.content for message in messages}
-        return message_dict
-
-    @utils.function_info
-    async def get_online_users(guild_id: int):
+    def get_online_users(self, guild_id: int):
         """Gets a list of online users from the specified guild.
 
         :param guild_id: The ID of the Discord guild.
@@ -552,7 +529,7 @@ class Bartender(commands.Bot):
         return online_members
 
     @utils.function_info
-    async def get_bot_display_name(guild_id: int):
+    def get_bot_display_name(self, guild_id: int):
         """Gets the display name of the bot in the specified guild.
 
         :param guild_id: The ID of the Discord guild.
@@ -568,7 +545,7 @@ class Bartender(commands.Bot):
         return bot_member.display_name if bot_member else "Bartender"
 
     @utils.function_info
-    async def get_users_in_voice_channel(channel_id: int):
+    def get_users_in_voice_channel(self, channel_id: int):
         """Gets a list of user display names in the specified voice channel.
 
         :param channel_id: The ID of the Discord voice channel.
@@ -581,6 +558,92 @@ class Bartender(commands.Bot):
             return None
 
         return [member.display_name for member in channel.members]
+
+    @utils.function_info
+    async def update_bot_display_name(self, guild_id: int, new_name: str):
+        """Updates the bot's display name in the specified guild.
+
+        :param guild_id: The ID of the Discord guild.
+        :type guild_id: integer
+        :param new_name: The new display name for the bot.
+        :type new_name: string
+        :return: The new display name of the bot in the guild.
+        :rtype: string
+        """
+        guild = discord.utils.get(bot.guilds, id=guild_id)
+        if guild is None:
+            return "Bartender"
+
+        try:
+            await bot.user.edit(nick=new_name, guild=guild)
+            return new_name
+        except discord.HTTPException as e:
+            logging.error(f"Error updating bot display name: {e}")
+            return f"Error updating bot display name: {e}"
+
+    @utils.function_info
+    async def send_message_to_channel(self, channel_id: int, message: str):
+        """Sends a message to the specified channel.
+
+        :param channel_id: The ID of the Discord channel.
+        :type channel_id: integer
+        :param message: The message to be sent.
+        :type message: string
+        :return: The sent message object.
+        :rtype: discord.Message
+        """
+        channel = discord.utils.get(bot.get_all_channels(), id=channel_id)
+        if channel is None:
+            return None
+
+        try:
+            return await channel.send(message)
+        except discord.HTTPException as e:
+            logging.error(f"Error sending message: {e}")
+            return None
+
+    @utils.function_info
+    async def send_reply_to_message(self, message_id: int, reply: str):
+        """Sends a reply to the specified message.
+
+        :param message_id: The ID of the message to reply to.
+        :type message_id: integer
+        :param reply: The reply message.
+        :type reply: string
+        :return: The sent reply message object.
+        :rtype: discord.Message
+        """
+        message = await bot.fetch_message(message_id)
+        if message is None:
+            return None
+
+        try:
+            return await message.reply(reply)
+        except discord.HTTPException as e:
+            logging.error(f"Error sending reply message: {e}")
+            return None
+
+    @utils.function_info
+    async def send_message_reaction(self, message_id: int, reaction: str):
+        """Adds a reaction to the specified message.
+
+        :param message_id: The ID of the message to add the reaction to.
+        :type message_id: integer
+        :param reaction: The reaction emoji.
+        :type reaction: string
+        :return: Whether the reaction was added successfully.
+        :rtype: boolean
+        """
+        message = await bot.fetch_message(message_id)
+        if message is None:
+            return False
+
+        try:
+            await message.add_reaction(reaction)
+            return True
+        except discord.HTTPException as e:
+            logging.error(f"Error adding reaction: {e}")
+            return False
 
 
 if __name__ == "__main__":
