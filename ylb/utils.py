@@ -177,6 +177,8 @@ class FunctionWrapper:
         parameters = {"type": "object", "properties": {}}
         for arg in args.args:
             argument_name = arg.arg
+            if argument_name == "self":
+                continue
             argument_type = self.extract_parameter_type(
                 argument_name, self.func.__doc__
             )

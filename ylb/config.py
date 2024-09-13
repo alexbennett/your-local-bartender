@@ -87,7 +87,7 @@ SHORT_MEMORY_FILENAME = ".memory/short_memory.json"
 
 DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 DISCORD_DEFAULT_CHANNEL = config_yaml.get("discord.default_voice_channel")
-CONTINUOUS_LISTEN_RECORDING_DURATION = config_yaml.get("discord.continuous_listen.recording_duration", 30)
+CONTINUOUS_LISTEN_RECORDING_DURATION = config_yaml.get("discord.continuous_listen.recording_duration", 20)
 CONTINUOUS_LISTEN_PAUSE_DURATION = config_yaml.get("discord.continuous_listen.pause_duration", 0.1)
 CONTINUOUS_LISTEN_ACTIVATION_PHRASE = config_yaml.get("discord.continuous_listen.activation_phrase", "binkins")
 CONTINUOUS_LISTEN_SAMPLE_RATE = config_yaml.get("discord.continous_listen.sample_rate", 16000)

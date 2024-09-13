@@ -107,6 +107,7 @@ class Bartender(commands.Bot):
         self.assistant = client.beta.assistants.retrieve(config.OPENAI_ASSISTANT_ID)
         self.current_thread = None
         self.session_doc_ref = None
+        self._speak_lock = threading.Lock()
 
     async def on_ready(self):
         """Event handler that runs when the bot is ready."""
@@ -219,7 +220,9 @@ class Bartender(commands.Bot):
         while True:
             try:
                 if not self._voice_client.is_connected():
-                    print("Voice client is not connected, exiting continuous_listen")
+                    print(
+                        "Voice client is not connected, exiting continuous_listen"
+                    )
                     break
 
                 if not self._is_recording:
@@ -311,13 +314,13 @@ class Bartender(commands.Bot):
                                             "tool_call": None,
                                         }
                                     )
+                                    break
                                 except Exception:
                                     print(
                                         "Failed to print assistant message: %s",
                                         message,
                                     )
                                     print(traceback.format_exc())
-                                break
                         print(f"Run {run.id} completed")
                         break
                     elif run.status == "requires_action":
@@ -332,8 +335,8 @@ class Bartender(commands.Bot):
                         break
                     else:
                         pass
-            else:
-                print(f"User with ID {user_id} not found in the guild.")
+                else:
+                    print(f"User with ID {user_id} not found in the guild.")
 
     async def handle_requires_action(self, data, run_id):
         """
@@ -343,7 +346,9 @@ class Bartender(commands.Bot):
         if hasattr(data.required_action.submit_tool_outputs, "tool_calls"):
             tool_calls = data.required_action.submit_tool_outputs.tool_calls
             tasks = [
-                self.fetch_tool_output(tool_call.function.name, json.loads(tool_call.function.arguments))
+                self.fetch_tool_output(
+                    tool_call.function.name, json.loads(tool_call.function.arguments)
+                )
                 for tool_call in tool_calls
             ]
             results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -398,18 +403,18 @@ class Bartender(commands.Bot):
         Returns:
         - The response from the function call.
         """
-        logging.warning(
-            f"Processing tool call...\n{TextColor.HEADER}{function_name}({json.dumps(arguments, indent=2)}){TextColor.ENDC}"
+        print(
+            f"Processing tool call -> {TextColor.HEADER}{function_name}({json.dumps(arguments, indent=2)}){TextColor.ENDC}"
         )
         for tool in self._tools:
             if tool.info["function"]["name"] == function_name:
                 try:
                     # Check if the tool function is async
                     if inspect.iscoroutinefunction(tool.func):
-                        function_response = await tool(**arguments)
+                        function_response = await tool(self, **arguments)
                     else:
                         # If sync, call directly
-                        function_response = tool(**arguments)
+                        function_response = tool(self, **arguments)
                     return str(function_response)
                 except Exception as e:
                     logging.error(
@@ -460,8 +465,8 @@ class Bartender(commands.Bot):
         print(f"[{user_name}]: {transcript}")
         return f"[{user_name}]: {transcript}"
 
-    @utils.function_info    
-    async def speak(message):
+    @utils.function_info
+    async def speak(self, message):
         """
         Play the assistant's response in the voice channel and log it to the text thread.
 
@@ -472,40 +477,38 @@ class Bartender(commands.Bot):
         """
         try:
             filename = "generated_audio/output.mp3"
-            response = client.audio.speech.create(
-                model=config.OPENAI_TTS_MODEL,
-                voice=config.OPENAI_TTS_VOICE,
-                input=message,
-            )
-            # response.stream_to_file(filename)
-            response.write_to_file(filename)
-            if os.name == "nt":
-                audio = discord.FFmpegPCMAudio(
-                    executable="c:/ffmpeg/bin/ffmpeg.exe",
-                    source=filename,
-                    options=f'-af "atempo=1.0" -v "quiet"',
+            with self._speak_lock:
+                response = client.audio.speech.create(
+                    model=config.OPENAI_TTS_MODEL,
+                    voice=config.OPENAI_TTS_VOICE,
+                    input=message,
                 )
-            elif os.name == "posix":
-                audio = discord.FFmpegPCMAudio(
-                    executable="ffmpeg",
-                    source=filename,
-                    options=f'-af "atempo=1.0" -v "quiet"',
-                )
+                # response.stream_to_file(filename)
+                response.write_to_file(filename)
+                if os.name == "nt":
+                    audio = discord.FFmpegPCMAudio(
+                        executable="c:/ffmpeg/bin/ffmpeg.exe",
+                        source=filename,
+                        options=f'-af "atempo=1.0" -v "quiet"',
+                    )
+                elif os.name == "posix":
+                    audio = discord.FFmpegPCMAudio(
+                        executable="ffmpeg",
+                        source=filename,
+                        options=f'-af "atempo=1.0" -v "quiet"',
+                    )
 
-            # Play the audio file using FFmpeg
-            while bot._voice_client.play(audio):
-                await asyncio.sleep(1)
-
-            # Wait for playback to finish
-            while bot._voice_client.is_playing():
-                await asyncio.sleep(1)
-
+                # Play the audio file using FFmpeg
+                self._voice_client.play(audio)
+                # Wait for playback to finish
+                while self._voice_client.is_playing():
+                    await asyncio.sleep(1)
         except Exception as e:
             print(f"Failed to generate TTS audio: {e}")
             print(traceback.format_exc())
 
     @utils.function_info
-    def get_online_users(guild_id: int):
+    def get_online_users(self, guild_id: int):
         """Gets a list of online users from the specified guild.
 
         :param guild_id: The ID of the Discord guild.
@@ -513,7 +516,7 @@ class Bartender(commands.Bot):
         :return: A list of display names of online users.
         :rtype: list
         """
-        guild = discord.utils.get(bot.guilds, id=guild_id)
+        guild = discord.utils.get(self.guilds, id=guild_id)
         if guild is None:
             return []
 
@@ -525,7 +528,7 @@ class Bartender(commands.Bot):
         return online_members
 
     @utils.function_info
-    def get_text_channels(guild_id: int):
+    def get_text_channels(self, guild_id: int):
         """Gets a list of text channels in the specified guild.
 
         :param guild_id: The ID of the Discord guild.
@@ -533,7 +536,7 @@ class Bartender(commands.Bot):
         :return: A list of dictionaries containing the id and name of each text channel.
         :rtype: list
         """
-        guild = discord.utils.get(bot.guilds, id=guild_id)
+        guild = discord.utils.get(self.guilds, id=guild_id)
         if guild is None:
             return []
 
@@ -544,7 +547,7 @@ class Bartender(commands.Bot):
         return text_channels
 
     @utils.function_info
-    def get_voice_channels(guild_id: int):
+    def get_voice_channels(self, guild_id: int):
         """Gets a list of voice channels in the specified guild.
 
         :param guild_id: The ID of the Discord guild.
@@ -552,7 +555,7 @@ class Bartender(commands.Bot):
         :return: A list of dictionaries containing the id and name of each voice channel.
         :rtype: list
         """
-        guild = discord.utils.get(bot.guilds, id=guild_id)
+        guild = discord.utils.get(self.guilds, id=guild_id)
         if guild is None:
             return []
 
@@ -563,7 +566,7 @@ class Bartender(commands.Bot):
         return voice_channels
 
     @utils.function_info
-    def get_bot_display_name(guild_id: int):
+    def get_bot_display_name(self, guild_id: int):
         """Gets the display name of the bot in the specified guild.
 
         :param guild_id: The ID of the Discord guild.
@@ -571,15 +574,15 @@ class Bartender(commands.Bot):
         :return: The bot's display name in the guild.
         :rtype: string
         """
-        guild = discord.utils.get(bot.guilds, id=guild_id)
+        guild = discord.utils.get(self.guilds, id=guild_id)
         if guild is None:
             return "Bartender"
 
-        bot_member = guild.get_member(bot.user.id)
+        bot_member = guild.get_member(self.user.id)
         return bot_member.display_name if bot_member else "Bartender"
 
     @utils.function_info
-    def get_users_in_voice_channel(channel_id: int):
+    def get_users_in_voice_channel(self, channel_id: int):
         """Gets a list of user display names in the specified voice channel.
 
         :param channel_id: The ID of the Discord voice channel.
@@ -587,14 +590,14 @@ class Bartender(commands.Bot):
         :return: A list of display names of users in the same voice channel, or None if the channel is not found.
         :rtype: string
         """
-        channel = discord.utils.get(bot.get_all_channels(), id=channel_id)
+        channel = discord.utils.get(self.get_all_channels(), id=channel_id)
         if channel is None or not isinstance(channel, discord.VoiceChannel):
             return None
 
         return [member.display_name for member in channel.members]
 
     @utils.function_info
-    async def update_bot_display_name(guild_id: int, new_name: str):
+    async def update_bot_display_name(self, guild_id: int, new_name: str):
         """Updates the bot's display name in the specified guild.
 
         :param guild_id: The ID of the Discord guild.
@@ -604,19 +607,19 @@ class Bartender(commands.Bot):
         :return: The new display name of the bot in the guild.
         :rtype: string
         """
-        guild = discord.utils.get(bot.guilds, id=guild_id)
+        guild = discord.utils.get(self.guilds, id=guild_id)
         if guild is None:
             return "Bartender"
 
         try:
-            await bot.user.edit(nick=new_name, guild=guild)
+            await self.user.edit(nick=new_name, guild=guild)
             return f"Updated bot display name to {new_name}."
         except discord.HTTPException as e:
             logging.error(f"Error updating bot display name: {e}")
             return f"Error updating bot display name: {e}"
 
     @utils.function_info
-    async def send_message_to_channel(channel_id: int, message: str):
+    async def send_message_to_channel(self, channel_id: int, message: str):
         """Sends a message to the specified channel.
 
         :param channel_id: The ID of the Discord channel.
@@ -626,7 +629,7 @@ class Bartender(commands.Bot):
         :return: The sent message object.
         :rtype: string
         """
-        channel = discord.utils.get(bot.get_all_channels(), id=channel_id)
+        channel = discord.utils.get(self.get_all_channels(), id=channel_id)
         if channel is None:
             return None
 
@@ -639,7 +642,7 @@ class Bartender(commands.Bot):
             return f"Error sending message."
 
     @utils.function_info
-    async def send_reply_to_message(message_id: int, reply: str):
+    async def send_reply_to_message(self, message_id: int, reply: str):
         """Sends a reply to the specified message.
 
         :param message_id: The ID of the message to reply to.
@@ -649,7 +652,7 @@ class Bartender(commands.Bot):
         :return: The sent reply message object.
         :rtype: string
         """
-        message = await bot.fetch_message(message_id)
+        message = await self.fetch_message(message_id)
         if message is None:
             return None
 
@@ -661,7 +664,7 @@ class Bartender(commands.Bot):
             return f"Error sending reply message."
 
     @utils.function_info
-    async def send_message_reaction(message_id: int, reaction: str):
+    async def send_message_reaction(self, message_id: int, reaction: str):
         """Adds a reaction to the specified message.
 
         :param message_id: The ID of the message to add the reaction to.
@@ -671,7 +674,7 @@ class Bartender(commands.Bot):
         :return: Whether the reaction was added successfully.
         :rtype: boolean
         """
-        message = await bot.fetch_message(message_id)
+        message = await self.fetch_message(message_id)
         if message is None:
             return False
 
@@ -683,7 +686,7 @@ class Bartender(commands.Bot):
             return "Error adding reaction."
 
     @utils.function_info
-    async def join_voice_channel(channel_id: int):
+    async def join_voice_channel(self, channel_id: int):
         """Joins the specified voice channel.
 
         :param channel_id: The ID of the voice channel to join.
@@ -691,27 +694,27 @@ class Bartender(commands.Bot):
         :return: Whether the bot successfully joined the channel.
         :rtype: boolean
         """
-        channel = discord.utils.get(bot.get_all_channels(), id=channel_id)
+        channel = discord.utils.get(self.get_all_channels(), id=channel_id)
         if channel is None or not isinstance(channel, discord.VoiceChannel):
             return False
 
         try:
-            bot._voice_client = await channel.connect()
+            self._voice_client = await channel.connect()
             return f"Succesfully joined voice channel {channel.name}."
         except discord.HTTPException as e:
             logging.error(f"Error joining voice channel: {e}")
             return f"Error joining voice channel."
 
     @utils.function_info
-    async def leave_voice_channel():
+    async def leave_voice_channel(self):
         """Leaves the current voice channel.
 
         :return: Whether the bot successfully left the channel.
         :rtype: boolean
         """
-        if bot._voice_client and bot._voice_client.is_connected():
+        if self._voice_client and self._voice_client.is_connected():
             try:
-                await bot._voice_client.disconnect()
+                await self._voice_client.disconnect()
                 return f"Succesfully left voice channel."
             except discord.HTTPException as e:
                 logging.error(f"Error leaving voice channel: {e}")
