@@ -18,13 +18,30 @@ VERSION = VERSION_FILE.read().strip()
 ## Setup Logging ##
 ###################
 
-# Configure logging
+# Setup logging configuration
+LOG_FILE = os.path.join(__location__, "../ylb.log")
+
+# Define custom logging configuration
 logging.basicConfig(
-    # filename="gps-toolkit-log.log",
-    # filemode="a",
-    level=logging.WARN,
-    format=f"[%(asctime)s][%(filename)s:%(lineno)s->%(funcName)s()][%(levelname)s] %(message)s",
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(LOG_FILE),
+        # logging.StreamHandler()  # Default stream handler will be customized later
+    ]
 )
+
+# Custom console handler without logging tags
+class ConsoleHandler(logging.StreamHandler):
+    def emit(self, record):
+        msg = self.format(record)
+        print(msg)  # Direct print to console
+
+# Add custom console handler
+console_handler = ConsoleHandler()
+console_handler.setFormatter(logging.Formatter('%(message)s'))  # Strip logging tags
+logging.getLogger().addHandler(console_handler)
+
 
 #############
 ## OpenAPI ##
@@ -86,11 +103,11 @@ SHORT_MEMORY_FILENAME = ".memory/short_memory.json"
 ###
 
 DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
-DISCORD_DEFAULT_CHANNEL = config_yaml.get("discord.default_voice_channel")
-CONTINUOUS_LISTEN_RECORDING_DURATION = config_yaml.get("discord.continuous_listen.recording_duration", 20)
-CONTINUOUS_LISTEN_PAUSE_DURATION = config_yaml.get("discord.continuous_listen.pause_duration", 0.1)
-CONTINUOUS_LISTEN_ACTIVATION_PHRASE = config_yaml.get("discord.continuous_listen.activation_phrase", "binkins")
-CONTINUOUS_LISTEN_SAMPLE_RATE = config_yaml.get("discord.continous_listen.sample_rate", 16000)
+DISCORD_DEFAULT_CHANNEL = config_yaml.get("discord", {}).get("default_voice_channel")
+CONTINUOUS_LISTEN_RECORDING_DURATION = config_yaml.get("discord", {}).get("continuous_listen", {}).get("recording_duration", 20)
+CONTINUOUS_LISTEN_PAUSE_DURATION = config_yaml.get("discord", {}).get("continuous_listen", {}).get("pause_duration", 0.1)
+CONTINUOUS_LISTEN_ACTIVATION_PHRASE = config_yaml.get("discord", {}).get("continuous_listen", {}).get("activation_phrase", "bartender")
+CONTINUOUS_LISTEN_SAMPLE_RATE = config_yaml.get("discord", {}).get("continuous_listen", {}).get("sample_rate", 16000)
 
 ###
 ## End Discord configuration options
@@ -102,18 +119,18 @@ CONTINUOUS_LISTEN_SAMPLE_RATE = config_yaml.get("discord.continous_listen.sample
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 OPENAI_ORG_ID = os.getenv("OPENAI_ORGANIZATION_ID")
-OPENAI_MODEL = config_yaml.get("openai.chat.model", "gpt-4o-mini")
-OPENAI_MODEL_TEMPERATURE = config_yaml.get("openai.chat.temperature", 1.0)
-OPENAI_VOICE_MODEL = config_yaml.get("openai.voice.model", "whisper-1")
-OPENAI_TTS_VOICE = config_yaml.get("openai.voice.tts_voice", "echo")
-OPENAI_TTS_MODEL = config_yaml.get("openai.voice.tts_model", "tts-1-hd")
+OPENAI_MODEL = config_yaml.get("openai", {}).get("chat", {}).get("model", "gpt-4o-mini")
+OPENAI_MODEL_TEMPERATURE = config_yaml.get("openai", {}).get("chat", {}).get("temperature", 1.0)
+OPENAI_VOICE_MODEL = config_yaml.get("openai", {}).get("voice", {}).get("model", "whisper-1")
+OPENAI_TTS_VOICE = config_yaml.get("openai", {}).get("voice", {}).get("tts_voice", "echo")
+OPENAI_TTS_MODEL = config_yaml.get("openai", {}).get("voice", {}).get("tts_model", "tts-1-hd")
 
 # Assistant
-OPENAI_ASSISTANT_ID = config_yaml.get("openai.assistant.id", "asst_ZUgOFB1c8RyXse4q888oTo5D")
-OPENAI_ASSISTANT_NAME = config_yaml.get("openai.assistant.name", None)
+OPENAI_ASSISTANT_ID = config_yaml.get("openai", {}).get("assistant", {}).get("id", "asst_ZUgOFB1c8RyXse4q888oTo5D")
+OPENAI_ASSISTANT_NAME = config_yaml.get("openai", {}).get("assistant", {}).get("name", "Bartender")
 
 # Vector store
-OPENAI_VECTOR_STORE_ID = config_yaml.get("openai.vector_store.id", "vs_dfpknpKmECiqIvaxAlo0bxuh")
+OPENAI_VECTOR_STORE_ID = config_yaml.get("openai", {}).get("vector_store", {}).get("id", "vs_dfpknpKmECiqIvaxAlo0bxuh")
 
 OPENAI_DEFAULT_PROMPT = "Let's have a voice conversation. You start by asking me what to discuss. Allow me 10 seconds to respond."
 

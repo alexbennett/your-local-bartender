@@ -16,6 +16,7 @@ class TextColor:
     ENDC = "\033[0m"
     BOLD = "\033[1m"
     UNDERLINE = "\033[4m"
+    OKCYAN = "\033[96m"
 
 
 class Config:
@@ -128,6 +129,33 @@ def print_list(
     ]
     if reset_color:
         print(TextColor.ENDC, end="")
+
+def print_title(
+    text: str, color: str = "", pretext: str = "", reset_color: bool = True
+):
+    print()
+    # print_bar(color=color, decorator="-")
+    if len(pretext):
+        pretext = " " + pretext  # add whitespace at start
+    text = " " + text  # add whitespace at start
+    if reset_color:
+        text = text + TextColor.ENDC
+    print(color + pretext + TextColor.BOLD + text)
+    print_bar(color=color, decorator=Config.DEFAULT_TITLE_DECORATOR)
+
+
+def print_section(text: str, color: str = "", depth: int = 1, reset_color: bool = True):
+    text = Config.DEFAULT_SECTION_START_DECORATOR * depth + "> " + text + " "
+    text_length = len(text)
+    decorators = Config.DEFAULT_SECTION_DECORATOR * (
+        Config.DEFAULT_COL_WIDTH - text_length
+    )
+    text = TextColor.BOLD + color + text + decorators
+    if reset_color:
+        text = text + TextColor.ENDC
+    print(text)
+    print()
+
 
 
 def num_tokens_from_string(string: str, encoding_name: str = "cl100k_base") -> int:

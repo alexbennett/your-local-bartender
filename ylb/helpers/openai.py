@@ -42,7 +42,7 @@ def openai_get_vector_store_file_ids() -> str:
     Retrieve a list of file IDs and names from the vector store.
 
     :return: A list of all file IDs in the vector store.
-    :rtype: string
+    :rtype: list
     """
     try:
         file_entries = client.beta.vector_stores.files.list(
@@ -50,7 +50,7 @@ def openai_get_vector_store_file_ids() -> str:
         )
         file_info_list = [file_entry.id for file_entry in file_entries.data]
         logging.info(f"Retrieved vector store file IDs: {file_info_list}")
-        return str(file_info_list)
+        return file_info_list
     except Exception as e:
         logging.error(f"Error retrieving file info from vector store: {str(e)}")
         return f"Error retrieving file info from vector store: {str(e)}"
@@ -88,10 +88,7 @@ def openai_update_assistant_code_interpreter():
     """
     try:
         # Retrieve the list of file IDs from the vector store
-        file_ids_str = openai_get_vector_store_file_ids()
-        file_ids = eval(
-            file_ids_str
-        )  # Convert the string representation back to a list
+        file_ids = openai_get_vector_store_file_ids()
 
         if not isinstance(file_ids, list):
             raise ValueError("Retrieved file IDs are not in the expected list format")

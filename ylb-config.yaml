@@ -1,14 +1,13 @@
 discord:
-  default_voice_channel: "General"
   continuous_listen:
-    activation_phrase: "binkins"
-    recording_duration: 30
+    activation_phrase: "gwen"
+    recording_duration: 15
     pause_duration: 0.1
     sample_rate: 16000
 openai:
   assistant:
     id: "asst_ZUgOFB1c8RyXse4q888oTo5D"
-    name: "Binkins"
+    name: "Gwen"
   chat: 
     model: "gpt-4o-mini"
     temperature: 1.0
