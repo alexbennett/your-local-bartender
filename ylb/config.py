@@ -27,9 +27,13 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
         logging.FileHandler(LOG_FILE),
-        # logging.StreamHandler()  # Default stream handler will be customized later
     ]
 )
+
+# Custom filter to only show logs from the bartender-v2 module
+class ModuleFilter(logging.Filter):
+    def filter(self, record):
+        return record.module == 'bartender-v2'
 
 # Custom console handler without logging tags
 class ConsoleHandler(logging.StreamHandler):
@@ -40,6 +44,7 @@ class ConsoleHandler(logging.StreamHandler):
 # Add custom console handler
 console_handler = ConsoleHandler()
 console_handler.setFormatter(logging.Formatter('%(message)s'))  # Strip logging tags
+console_handler.addFilter(ModuleFilter())  # Apply the filter to ignore logs from other modules
 logging.getLogger().addHandler(console_handler)
 
 
@@ -104,7 +109,7 @@ SHORT_MEMORY_FILENAME = ".memory/short_memory.json"
 
 DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 DISCORD_DEFAULT_CHANNEL = config_yaml.get("discord", {}).get("default_voice_channel")
-CONTINUOUS_LISTEN_RECORDING_DURATION = config_yaml.get("discord", {}).get("continuous_listen", {}).get("recording_duration", 20)
+CONTINUOUS_LISTEN_RECORDING_DURATION = config_yaml.get("discord", {}).get("continuous_listen", {}).get("recording_duration", 15)
 CONTINUOUS_LISTEN_PAUSE_DURATION = config_yaml.get("discord", {}).get("continuous_listen", {}).get("pause_duration", 0.1)
 CONTINUOUS_LISTEN_ACTIVATION_PHRASE = config_yaml.get("discord", {}).get("continuous_listen", {}).get("activation_phrase", "bartender")
 CONTINUOUS_LISTEN_SAMPLE_RATE = config_yaml.get("discord", {}).get("continuous_listen", {}).get("sample_rate", 16000)

@@ -1,9 +1,8 @@
 discord:
   continuous_listen:
     activation_phrase: "gwen"
-    recording_duration: 15
+    recording_duration: 10
     pause_duration: 0.1
-    sample_rate: 16000
 openai:
   assistant:
     id: "asst_ZUgOFB1c8RyXse4q888oTo5D"

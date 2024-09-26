@@ -7,6 +7,7 @@ import inspect
 import json
 import logging
 import discord
+import datetime
 from discord.ext import commands
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import traceback
@@ -53,18 +54,24 @@ class Bartender(commands.Bot):
         self._is_speaking = False
         self._voice_client = None
         self._tools = [
-            self.get_online_users,
-            self.get_bot_display_name,
+            self.get_guild_online_users,
+            self.get_guild_bot_display_name,
             self.get_users_in_voice_channel,
-            self.get_text_channels,
-            self.get_voice_channels,
+            self.get_guild_text_channels,
+            self.get_guild_voice_channels,
             self.update_bot_display_name,
             self.send_message_to_channel,
             self.send_reply_to_message,
             self.send_message_reaction,
+            self.remove_message_reaction,
             self.speak,
             self.join_voice_channel,
             self.leave_voice_channel,
+            self.move_user_to_voice_channel,
+            self.mute_user,
+            self.unmute_user,
+            self.get_user_voice_state,
+            self.get_guild_users,
         ] + extra_tools
 
         try:
@@ -72,6 +79,7 @@ class Bartender(commands.Bot):
                 assistant = client.beta.assistants.retrieve(config.OPENAI_ASSISTANT_ID)
                 client.beta.assistants.update(
                     assistant_id=assistant.id,
+                    instructions=config.SYSTEM_PROMPT.format(name=config.OPENAI_ASSISTANT_NAME),
                     tools=[tool.info for tool in self._tools]
                     + [{"type": "file_search"}, {"type": "code_interpreter"}],
                     tool_resources={
@@ -83,7 +91,7 @@ class Bartender(commands.Bot):
                         },
                     },
                 )
-                print(f"Updated existing assistant ({assistant.id}) with latest tools.")
+                logging.info(f"Updated existing assistant ({assistant.id}) with latest tools.")
             else:
                 assistant = client.beta.assistants.create(
                     name=config.OPENAI_ASSISTANT_NAME,
@@ -101,13 +109,13 @@ class Bartender(commands.Bot):
                     model=config.OPENAI_MODEL,
                     temperature=config.OPENAI_MODEL_TEMPERATURE,
                 )
-                print(f"Created new assistant. Assistant ID: {assistant.id}")
-                print(
+                logging.info(f"Created new assistant. Assistant ID: {assistant.id}")
+                logging.info(
                     "Please record this ID in your configuration and restart the program."
                 )
                 exit(1)
         except Exception as e:
-            print(f"Failed to initialize assistant: {str(e)}{traceback.format_exc()}")
+            logging.error(f"Failed to initialize assistant: {str(e)}{traceback.format_exc()}")
             exit(1)
 
         self.listen_task = None
@@ -115,6 +123,7 @@ class Bartender(commands.Bot):
         self.assistant = client.beta.assistants.retrieve(config.OPENAI_ASSISTANT_ID)
         self.current_thread = None
         self.session_doc_ref = None
+        self.transcript_buffer = []
         self._speak_lock = asyncio.Lock()
 
     def task_exception_handler(self, task):
@@ -130,10 +139,10 @@ class Bartender(commands.Bot):
         
     async def on_ready(self):
         """Event handler that runs when the bot is ready."""
-        print(f"{TextColor.HEADER}Logged in as {self.user.name} (ID: {self.user.id}){TextColor.ENDC}")
-        print(f"{TextColor.OKCYAN}Connected to the following communities:{TextColor.ENDC}")
+        logging.info(f"{TextColor.HEADER}Logged in as {self.user.name} (ID: {self.user.id}){TextColor.ENDC}")
+        logging.info(f"{TextColor.OKCYAN}Connected to the following communities:{TextColor.ENDC}")
         for guild in self.guilds:
-            print(
+            logging.info(
                 f" - {TextColor.OKGREEN}{guild.name}{TextColor.ENDC} "
                 f"(ID: {guild.id}) | Members: {guild.member_count}"
             )
@@ -165,27 +174,34 @@ class Bartender(commands.Bot):
                 return
 
             try:
-                # Perform a one-time chat completion
-                completion = client.chat.completions.create(
-                    model=config.OPENAI_MODEL,
-                    messages=[
-                        {
-                            "role": "system",
-                            "content": config.SYSTEM_PROMPT.format(name=config.OPENAI_ASSISTANT_NAME),
-                        },
-                        {
-                            "role": "user",
-                            "content": message.content,
-                        },
-                    ],
-                    temperature=config.OPENAI_MODEL_TEMPERATURE,
-                )
+                if self._voice_client and self._voice_client.is_connected():
+                    logging.info(f"Adding text message to current thread: \"{message.content}\"")
+                    # Add the message to the current thread
+                    client.beta.threads.messages.create(
+                        thread_id=self.current_thread.id, role="user", content=message.content
+                    )
+                else:
+                    # Perform a one-time chat completion
+                    completion = client.chat.completions.create(
+                        model=config.OPENAI_MODEL,
+                        messages=[
+                            {
+                                "role": "system",
+                                "content": config.SYSTEM_PROMPT.format(name=config.OPENAI_ASSISTANT_NAME),
+                            },
+                            {
+                                "role": "user",
+                                "content": message.content,
+                            },
+                        ],
+                        temperature=config.OPENAI_MODEL_TEMPERATURE,
+                    )
 
-                # Extract the assistant's response
-                response = completion.choices[0].message.content
+                    # Extract the assistant's response
+                    response = completion.choices[0].message.content
 
-                # Send the response back to the channel
-                await message.reply(response)
+                    # Send the response back to the channel
+                    await message.reply(response)
 
             except Exception as e:
                 # Handle any errors during the API call
@@ -193,11 +209,11 @@ class Bartender(commands.Bot):
                 await message.reply("Sorry, I couldn't generate a response due to an error.")
 
         elif message.content.startswith(COMMANDS_JOIN):
-            utils.print_section(f"Joining voice channel", TextColor.OKCYAN)
+            logging.info(f"Received join command from {message.author.display_name}")
             try:
                 await self.join(message)
             except Exception as e:
-                print(
+                logging.error(
                     f"Error while listening in voice channel: {e}{traceback.format_exc()}"
                 )
                 if self._voice_client:
@@ -228,7 +244,7 @@ class Bartender(commands.Bot):
         # Prepare the assistant's pre-prompt for the conversation
         start_prompt = (
             f"You are now participating in a voice conversation in the Discord server '{message.guild.name}' (id: {message.guild.id}) "
-            f"and voice channel '{channel.name}' (id: {channel.id}). The conversation was started by '{message.author.display_name}'."
+            f"and voice channel '{channel.name}' (id: {channel.id}). The conversation was started by '{message.author.display_name}'. You will receive messages in chunks. Messages are stored by the program until your name ({config.OPENAI_ASSISTANT_NAME}) is mentioned. All messages stored up to that point are then sent to you for processing. You should consider the messages in the order received. Each message includes a timestamp, the name and id of the speaker, and the message content. Respond with the speak tool."
         )
 
         # Start the conversation thread with the assistant
@@ -257,7 +273,7 @@ class Bartender(commands.Bot):
         self.listen_task = asyncio.create_task(self.continuous_listen(message.channel))
         self.listen_task.add_done_callback(self.task_exception_handler)
 
-        await message.add_reaction("👂")
+        await message.add_reaction("✅")
 
     async def continuous_listen(self, text_channel):
         """
@@ -269,7 +285,7 @@ class Bartender(commands.Bot):
         while True:
             try:
                 if not self._voice_client.is_connected():
-                    print(
+                    logging.warning(
                         "Voice client is not connected, exiting continuous_listen"
                     )
                     break
@@ -289,7 +305,7 @@ class Bartender(commands.Bot):
                 await asyncio.sleep(config.CONTINUOUS_LISTEN_PAUSE_DURATION)
 
             except Exception as e:
-                print(f"Error in continuous_listen: {str(e)}")
+                logging.error(f"Error in continuous_listen: {str(e)}")
 
     async def once_done(self, sink: discord.sinks, channel: discord.TextChannel, *args):
         """
@@ -304,87 +320,101 @@ class Bartender(commands.Bot):
         """
         # Check if any users were recorded
         if not sink.audio_data:
-            print("No users were recorded, looping again...")
             return
 
+        self.transcript_buffer = []
+
         for user_id, audio in sink.audio_data.items():
-            user_name = await self.get_username_from_id(user_id, channel.guild)
-            if user_name:
-                transcript = await self.process_audio_stream(user_name, audio)
+            user_nick = await self.get_username_from_id(user_id, channel.guild)
+            if user_nick:
+                raw_transcript = await self.transcribe_audio_stream(user_id, audio)
 
-                # Add the transcript as a message to the assistant thread
-                msg = client.beta.threads.messages.create(
-                    thread_id=self.current_thread.id, role="user", content=transcript
-                )
+                timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                tagged_transcript = f"[{timestamp}] [{user_nick} (id: {user_id})] {raw_transcript}"
 
-                # # Store the message in the Firestore subcollection
-                self.session_doc_ref.collection("messages").add(
-                    {
-                        "openai_thread_id": self.current_thread.id,
-                        "openai_message_id": msg.id,
-                        "content": transcript,
-                        "timestamp": firestore.SERVER_TIMESTAMP,
-                        "tool_call": None,
-                    }
-                )
+                logging.info(f"{TextColor.OKGREEN}{tagged_transcript}{TextColor.ENDC}")
 
-                # Poll the assistant for a response
-                run = client.beta.threads.runs.create_and_poll(
-                    thread_id=self.current_thread.id,
-                    assistant_id=self.assistant.id,
-                    instructions=config.INSTRUCTION_PROMPT,
-                    temperature=config.OPENAI_MODEL_TEMPERATURE,
-                )
+                self.transcript_buffer.append(tagged_transcript)
 
-                while True:
-                    run = client.beta.threads.runs.retrieve(
-                        thread_id=self.current_thread.id, run_id=run.id
+                # Check if the activation phrase is in the transcript
+                if config.CONTINUOUS_LISTEN_ACTIVATION_PHRASE.lower() in raw_transcript.lower():
+                    # Combine all transcripts in the buffer
+                    combined_transcript = "\n".join(self.transcript_buffer)
+                    self.transcript_buffer.clear()
+
+                    # Add the combined transcript as a message to the assistant thread
+                    msg = client.beta.threads.messages.create(
+                        thread_id=self.current_thread.id, role="user", content=combined_transcript
                     )
-                    if run.status == "completed":
-                        messages = client.beta.threads.messages.list(
-                            thread_id=self.current_thread.id, limit=1
-                        )
-                        for message in messages:
-                            if message.role == "assistant":
-                                try:
-                                    print(
-                                        f"{TextColor.BOLD}{TextColor.OKGREEN}[{config.OPENAI_ASSISTANT_NAME} 💭] {message.content[0].text.value}{TextColor.ENDC}\n"
-                                    )
-                                    await channel.send(f"💭 {message.content[0].text.value}")
 
-                                    # Store the assistant message in the Firestore subcollection
-                                    self.session_doc_ref.collection("messages").add(
-                                        {
-                                            "openai_thread_id": self.current_thread.id,
-                                            "openai_message_id": message.id,
-                                            "content": message.content[0].text.value,
-                                            "timestamp": firestore.SERVER_TIMESTAMP,
-                                            "tool_call": None,
-                                        }
-                                    )
-                                    break
-                                except Exception:
-                                    print(
-                                        "Failed to print assistant message: %s",
-                                        message,
-                                    )
-                                    print(traceback.format_exc())
-                        print(f"Run {run.id} completed")
-                        break
-                    elif run.status == "requires_action":
-                        print(
-                            f"Required action in {run.id} → {run.thread_id}"
+                    # Store the message in the Firestore subcollection
+                    self.session_doc_ref.collection("messages").add(
+                        {
+                            "openai_thread_id": self.current_thread.id,
+                            "openai_message_id": msg.id,
+                            "discord_user_id": user_id,
+                            "content": combined_transcript,
+                            "timestamp": firestore.SERVER_TIMESTAMP,
+                            "tool_call": None,
+                        }
+                    )
+
+                    # Poll the assistant for a response
+                    run = client.beta.threads.runs.create_and_poll(
+                        thread_id=self.current_thread.id,
+                        assistant_id=self.assistant.id,
+                        instructions=config.INSTRUCTION_PROMPT,
+                        temperature=config.OPENAI_MODEL_TEMPERATURE,
+                    )
+
+                    while True:
+                        run = client.beta.threads.runs.retrieve(
+                            thread_id=self.current_thread.id, run_id=run.id
                         )
-                        await self.handle_requires_action(run, run.id)
-                    elif run.status == "failed":
-                        print(
-                            f"Run {run.id} failed with error: {run.last_error.code} -> {run.last_error.message}"
-                        )
-                        break
-                    else:
-                        pass
-                else:
-                    print(f"User with ID {user_id} not found in the guild.")
+                        if run.status == "completed":
+                            messages = client.beta.threads.messages.list(
+                                thread_id=self.current_thread.id, limit=1
+                            )
+                            for message in messages:
+                                if message.role == "assistant":
+                                    try:
+                                        logging.info(
+                                            f"{TextColor.BOLD}{TextColor.GRAY}[{config.OPENAI_ASSISTANT_NAME} 💭] {message.content[0].text.value}{TextColor.ENDC}\n"
+                                        )
+                                        await channel.send(f"💭 {message.content[0].text.value}")
+
+                                        # Store the assistant message in the Firestore subcollection
+                                        self.session_doc_ref.collection("messages").add(
+                                            {
+                                                "openai_thread_id": self.current_thread.id,
+                                                "openai_message_id": message.id,
+                                                "content": message.content[0].text.value,
+                                                "timestamp": firestore.SERVER_TIMESTAMP,
+                                                "tool_call": None,
+                                            }
+                                        )
+                                        break
+                                    except Exception:
+                                        logging.error(
+                                            "Failed to print assistant message: %s",
+                                            message,
+                                        )
+                                        logging.error(traceback.format_exc())
+                            logging.info(f"Run {run.id} completed")
+                            break
+                        elif run.status == "requires_action":
+                            logging.info(
+                                f"Required action in {run.id} → {run.thread_id}"
+                            )
+                            await self.handle_requires_action(run, run.id)
+                        elif run.status == "failed":
+                            logging.error(
+                                f"Run {run.id} failed with error: {run.last_error.code} -> {run.last_error.message}"
+                            )
+                            break
+                        else:
+                            pass
+                        await asyncio.sleep(0.1)
 
     async def handle_requires_action(self, data, run_id):
         """
@@ -431,7 +461,9 @@ class Bartender(commands.Bot):
                         },
                     }
                 )
-                print(f"Tool call {tool_call_id} completed")
+                logging.info(
+                    f"Tool call completed -> {TextColor.HEADER}{tool_call.function.name}({json.dumps(tool_call.function.arguments, indent=2)}) = {output}{TextColor.ENDC}"
+                )
         else:
             logging.info("No tool calls found in the required action.")
 
@@ -450,7 +482,7 @@ class Bartender(commands.Bot):
         Returns:
         - The response from the function call.
         """
-        print(
+        logging.info(
             f"Processing tool call -> {TextColor.HEADER}{function_name}({json.dumps(arguments, indent=2)}){TextColor.ENDC}"
         )
         for tool in self._tools:
@@ -464,11 +496,11 @@ class Bartender(commands.Bot):
                         function_response = tool(self, **arguments)
                     return str(function_response)
                 except Exception as e:
-                    logging.error(
+                    logging.warning(
                         f"Error during tool call: {str(e)}\n{traceback.format_exc()}"
                     )
                     return f"Error during tool call: {str(e)}\n{traceback.format_exc()}"
-        logging.error(f"Tool function '{function_name}' not found.")
+        logging.warning(f"Tool function '{function_name}' not found.")
         return f"Error: Tool function '{function_name}' not found."
 
     async def get_username_from_id(self, user_id, guild):
@@ -487,37 +519,56 @@ class Bartender(commands.Bot):
             if user:
                 return user.display_name
         except Exception as e:
-            print(f"Error fetching username for user ID {user_id}: {str(e)}")
+            logging.info(f"Error fetching username for user ID {user_id}: {str(e)}")
+        return None
+    
+    async def get_nick_from_id(self, user_id, guild):
+        """
+        Retrieves the nickname of a user from their ID within a guild.
+
+        Args:
+            user_id (int): The ID of the user.
+            guild (discord.Guild): The Discord guild to search for the user.
+
+        Returns:
+            str or None: The user's nickname if found, otherwise None.
+        """
+        try:
+            user = await guild.fetch_member(user_id)
+            if user:
+                return user.nick
+        except Exception as e:
+            logging.info(f"Error fetching nickname for user ID {user_id}: {str(e)}")
         return None
 
-    async def process_audio_stream(self, user_name, audio):
+    async def transcribe_audio_stream(self, user_id, audio):
         """
         Processes an audio stream to transcribe speech using OpenAI's Whisper API.
 
         Args:
-            user_name (str): The name of the user associated with the audio.
+            user_id (str): The ID of the user associated with the audio.
             audio (discord.AudioSink): The audio data to be transcribed.
 
         Returns:
             str: The transcribed text from the audio stream.
         """
-        filename = f"generated_audio/request-{user_name}.wav"
+        filename = f"generated_audio/request-{user_id}.wav"
         with open(filename, "wb") as f:
             f.write(audio.file.getbuffer())
 
         audio_file = open(filename, "rb")
         transcript = client.audio.transcriptions.create(
-            model=config.OPENAI_VOICE_MODEL, file=audio_file, response_format="text"
+            model=config.OPENAI_VOICE_MODEL, file=audio_file, response_format="text", prompt=config.PERSONALITY_PROMPT
         )
-        print(f"[{user_name}]: {transcript}")
-        return f"[{user_name}]: {transcript}"
+
+        return str(transcript)
 
     @utils.function_info
     async def speak(self, message):
         """
-        Play the assistant's response in the voice channel and log it to the text thread.
+        Use TTS to play a spoken message in the voice channel.
 
-        :param message: The assistant's response text.
+        :param message: The text to be spoken.
         :type message: string
         :return: The spoken message.
         :rtype: string
@@ -551,12 +602,12 @@ class Bartender(commands.Bot):
                 while self._voice_client.is_playing():
                     await asyncio.sleep(1)
         except Exception as e:
-            print(f"Failed to generate TTS audio: {e}")
-            print(traceback.format_exc())
+            logging.warning(f"Failed to generate TTS audio: {e}")
+            logging.warning(traceback.format_exc())
             return f"Failed to speak: {e}"
 
     @utils.function_info
-    def get_online_users(self, guild_id: int):
+    def get_guild_online_users(self, guild_id: int):
         """Gets a list of online users from the specified guild.
 
         :param guild_id: The ID of the Discord guild.
@@ -576,7 +627,7 @@ class Bartender(commands.Bot):
         return online_members
 
     @utils.function_info
-    def get_text_channels(self, guild_id: int):
+    def get_guild_text_channels(self, guild_id: int):
         """Gets a list of text channels in the specified guild.
 
         :param guild_id: The ID of the Discord guild.
@@ -595,7 +646,7 @@ class Bartender(commands.Bot):
         return text_channels
 
     @utils.function_info
-    def get_voice_channels(self, guild_id: int):
+    def get_guild_voice_channels(self, guild_id: int):
         """Gets a list of voice channels in the specified guild.
 
         :param guild_id: The ID of the Discord guild.
@@ -614,7 +665,7 @@ class Bartender(commands.Bot):
         return voice_channels
 
     @utils.function_info
-    def get_bot_display_name(self, guild_id: int):
+    def get_guild_bot_display_name(self, guild_id: int):
         """Gets the display name of the bot in the specified guild.
 
         :param guild_id: The ID of the Discord guild.
@@ -735,6 +786,28 @@ class Bartender(commands.Bot):
         except discord.HTTPException as e:
             logging.error(f"Error adding reaction: {e}")
             return "Error adding reaction."
+        
+    @utils.function_info
+    async def remove_message_reaction(self, message_id: int, reaction: str):
+        """Removes a reaction from the specified message.
+
+        :param message_id: The ID of the message to remove the reaction from.
+        :type message_id: integer
+        :param reaction: The reaction emoji.
+        :type reaction: string
+        :return: Whether the reaction was removed successfully.
+        :rtype: boolean
+        """
+        message = await self.get_message(message_id)
+        if message is None:
+            return f"Message with ID {message_id} not found."
+
+        try:
+            await message.remove_reaction(reaction, self.user)
+            return "Reaction removed successfully."
+        except discord.HTTPException as e:
+            logging.error(f"Error removing reaction: {e}")
+            return "Error removing reaction."
 
     @utils.function_info
     async def join_voice_channel(self, channel_id: int):
@@ -772,6 +845,138 @@ class Bartender(commands.Bot):
                 return f"Error leaving voice channel."
         else:
             return "Bot is not connected to a voice channel."
+        
+    @utils.function_info
+    async def move_user_to_voice_channel(self, user_id: int, channel_id: int):
+        """Moves a user to the specified voice channel.
+
+        :param user_id: The ID of the user to move.
+        :type user_id: integer
+        :param channel_id: The ID of the voice channel to move the user to.
+        :type channel_id: integer
+        :return: A message indicating the result of the operation.
+        :rtype: string
+        """
+        if not self._voice_client or not self._voice_client.is_connected():
+            return "Bot is not connected to any voice channel."
+
+        guild = self._voice_client.guild
+        member = guild.get_member(user_id)
+        if member is None:
+            return f"User with ID {user_id} not found."
+
+        channel = discord.utils.get(guild.voice_channels, id=channel_id)
+        if channel is None:
+            return f"Voice channel with ID {channel_id} not found."
+
+        try:
+            await member.move_to(channel)
+            return f"Successfully moved user {member.display_name} to voice channel {channel.name}."
+        except discord.HTTPException as e:
+            logging.error(f"Error moving user to voice channel: {e}")
+            return f"Error moving user to voice channel."
+
+    @utils.function_info
+    async def mute_user(self, guild_id: int, user_id: int):
+        """Mutes the specified user in the specified guild.
+
+        :param guild_id: The ID of the Discord guild.
+        :type guild_id: integer
+        :param user_id: The ID of the user to mute.
+        :type user_id: integer
+        :return: A message indicating the result of the operation.
+        :rtype: string
+        """
+        guild = discord.utils.get(self.guilds, id=guild_id)
+        if guild is None:
+            return f"Guild with ID {guild_id} not found."
+
+        member = guild.get_member(user_id)
+        if member is None:
+            return f"User with ID {user_id} not found."
+
+        try:
+            await member.edit(mute=True)
+            return f"Successfully muted user {member.display_name}."
+        except discord.HTTPException as e:
+            logging.error(f"Error muting user: {e}")
+            return f"Error muting user."
+        
+    @utils.function_info
+    async def unmute_user(self, guild_id: int, user_id: int):
+        """Unmutes the specified user in the specified guild.
+
+        :param guild_id: The ID of the Discord guild.
+        :type guild_id: integer
+        :param user_id: The ID of the user to unmute.
+        :type user_id: integer
+        :return: A message indicating the result of the operation.
+        :rtype: string
+        """
+        guild = discord.utils.get(self.guilds, id=guild_id)
+        if guild is None:
+            return f"Guild with ID {guild_id} not found."
+
+        member = guild.get_member(user_id)
+        if member is None:
+            return f"User with ID {user_id} not found."
+
+        try:
+            await member.edit(mute=False)
+            return f"Successfully unmuted user {member.display_name}."
+        except discord.HTTPException as e:
+            logging.error(f"Error unmuting user: {e}")
+            return f"Error unmuting user."
+        
+    @utils.function_info
+    async def get_user_voice_state(self, user_id: int):
+        """Gets the voice state of the specified user.
+
+        :param user_id: The ID of the user to get the voice state for.
+        :type user_id: integer
+        :return: A dictionary containing the voice state of the user.
+        :rtype: dict
+        """
+        if not self._voice_client or not self._voice_client.is_connected():
+            return "Bot is not connected to any voice channel."
+
+        guild = self._voice_client.guild
+        member = guild.get_member(user_id)
+        if member is None:
+            return f"User with ID {user_id} not found."
+
+        return {
+            "user_id": member.id,
+            "display_name": member.display_name,
+            "voice_channel_id": member.voice.channel.id if member.voice else None,
+            "is_muted": member.voice.mute if member.voice else None,
+            "is_deafened": member.voice.deaf if member.voice else None,
+            "is_streaming": member.voice.self_stream if member.voice else None,
+        }
+    
+    @utils.function_info
+    async def get_guild_users(self, guild_id: int):
+        """Gets a list of users in the specified guild.
+
+        :param guild_id: The ID of the Discord guild.
+        :type guild_id: integer
+        :return: A list of dictionaries containing user information.
+        :rtype: list
+        """
+        guild = discord.utils.get(self.guilds, id=guild_id)
+        if guild is None:
+            return []
+
+        users = [
+            {
+                "id": member.id,
+                "name": member.display_name,
+                "status": str(member.status),
+                "joined_at": str(member.joined_at),
+            }
+            for member in guild.members
+        ]
+        return users
 
 def print_welcome_screen():
     """Prints the ASCII logo and basic program details."""
@@ -791,11 +996,6 @@ def print_welcome_screen():
  Author(s): {authors}
  Description: {description}
  
- {TextColor.OKCYAN}Discord Configuration{TextColor.ENDC}
- Continuous Listen Recording Duration: {config.CONTINUOUS_LISTEN_RECORDING_DURATION}
- Continuous Listen Pause Duration: {config.CONTINUOUS_LISTEN_PAUSE_DURATION}
- Continuous Listen Activation Phrase: {config.CONTINUOUS_LISTEN_ACTIVATION_PHRASE}
- 
  {TextColor.OKCYAN}OpenAI Configuration{TextColor.ENDC}
  Organization ID: {config.OPENAI_ORG_ID}
  Model: {config.OPENAI_MODEL}
@@ -806,9 +1006,15 @@ def print_welcome_screen():
  Assistant ID: {config.OPENAI_ASSISTANT_ID}
  Assistant Name: {config.OPENAI_ASSISTANT_NAME}
  Vector Store ID: {config.OPENAI_VECTOR_STORE_ID}
+
+ {TextColor.OKCYAN}Discord Configuration{TextColor.ENDC}
+ Continuous Listen Recording Duration: {config.CONTINUOUS_LISTEN_RECORDING_DURATION}
+ Continuous Listen Pause Duration: {config.CONTINUOUS_LISTEN_PAUSE_DURATION}
+ Continuous Listen Activation Phrase: \"{config.CONTINUOUS_LISTEN_ACTIVATION_PHRASE}\"
     """
     logging.info(ascii_logo)
     logging.info(program_details)
+
 
 if __name__ == "__main__":
     print_welcome_screen()
@@ -825,4 +1031,4 @@ if __name__ == "__main__":
     bot = Bartender(
         command_prefix=COMMAND_PREFIX, intents=intents, extra_tools=extra_tools
     )
-    bot.run(config.DISCORD_BOT_TOKEN)
+    bot.run(config.DISCORD_BOT_TOKEN)        
