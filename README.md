@@ -1,6 +1,6 @@
 # Your Local Bartender
 
- Your Local Bartender is a virtual assistant integrated into a Discord server. It can do all of the fun things modern LLMs can do, like generate images, read and respond to messages, and even join voice chats to engage in real-time conversation. The bot can also leverage many parts of the Discord Bot API to assist with moderation, user management, server management, and more. 
+ Your Local Bartender is a virtual assistant integrated into a Discord server. It can do all of the fun things modern LLMs can do, like generate images, read and respond to messages, and even join voice channels for real-time conversation. The bot can also leverage many parts of the Discord Bot API to assist with moderation, user management, server management, and more. 
 
 ## Command Reference
 
