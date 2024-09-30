@@ -1,14 +1,15 @@
+enable_thought_messages: false
 discord:
   continuous_listen:
     activation_phrase: "gwen"
-    recording_duration: 10
+    recording_duration: 15
     pause_duration: 0.1
 openai:
   assistant:
     id: "asst_ZUgOFB1c8RyXse4q888oTo5D"
     name: "Gwen"
   chat: 
-    model: "gpt-4o-mini"
+    model: "o1-mini"
     temperature: 1.0
   voice: 
     model: "whisper-1"

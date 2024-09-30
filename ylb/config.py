@@ -77,6 +77,7 @@ config_yaml = yaml.load(open(yaml_config_path), Loader=Loader)
 ## General configuration options
 ###
 
+ENABLE_THOUGHT_MESSAGES = config_yaml.get("enable_thought_messages", False)
 CONVO_MAX_CYCLES = 100  # Maximum number of consecutive tool calls within a conversation
 MAX_MESSAGE_BUFFER_SIZE = 150  # Maximum number of messages to store in memory
 
