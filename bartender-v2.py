@@ -72,6 +72,10 @@ class Bartender(commands.Bot):
             self.unmute_user,
             self.get_user_voice_state,
             self.get_guild_users,
+            self.create_text_channel,
+            self.delete_text_channel,
+            self.create_voice_channel,
+            self.delete_voice_channel,
         ] + extra_tools
 
         try:
@@ -381,7 +385,8 @@ class Bartender(commands.Bot):
                                         logging.info(
                                             f"{TextColor.BOLD}{TextColor.GRAY}[{config.OPENAI_ASSISTANT_NAME} 💭] {message.content[0].text.value}{TextColor.ENDC}\n"
                                         )
-                                        await channel.send(f"💭 {message.content[0].text.value}")
+                                        if config.ENABLE_THOUGHT_MESSAGES:
+                                            await channel.send(f"💭 {message.content[0].text.value}")
 
                                         # Store the assistant message in the Firestore subcollection
                                         self.session_doc_ref.collection("messages").add(
@@ -462,7 +467,7 @@ class Bartender(commands.Bot):
                     }
                 )
                 logging.info(
-                    f"Tool call completed -> {TextColor.HEADER}{tool_call.function.name}({json.dumps(tool_call.function.arguments, indent=2)}) = {output}{TextColor.ENDC}"
+                    f"Tool call completed -> {TextColor.HEADER}{tool_call.function.name}()"
                 )
         else:
             logging.info("No tool calls found in the required action.")
@@ -927,6 +932,94 @@ class Bartender(commands.Bot):
         except discord.HTTPException as e:
             logging.error(f"Error unmuting user: {e}")
             return f"Error unmuting user."
+        
+    @utils.function_info
+    async def create_voice_channel(self, guild_id: int, channel_name: str):
+        """Creates a new voice channel in the specified guild.
+
+        :param guild_id: The ID of the Discord guild.
+        :type guild_id: integer
+        :param channel_name: The name of the new voice channel.
+        :type channel_name: string
+        :return: A message indicating the result of the operation.
+        :rtype: string
+        """
+        guild = discord.utils.get(self.guilds, id=guild_id)
+        if guild is None:
+            return f"Guild with ID {guild_id} not found."
+
+        try:
+            await guild.create_voice_channel(channel_name)
+            return f"Successfully created voice channel '{channel_name}'."
+        except discord.HTTPException as e:
+            logging.error(f"Error creating voice channel: {e}")
+            return f"Error creating voice channel."
+        
+    @utils.function_info
+    async def delete_voice_channel(self, guild_id: int, channel_id: int):
+        """Deletes the specified voice channel.
+
+        :param guild_id: The ID of the Discord guild.
+        :type guild_id: integer
+        :param channel_id: The ID of the voice channel to delete.
+        :type channel_id: integer
+        :return: A message indicating the result of the operation.
+        :rtype: string
+        """
+        channel = discord.utils.get(self.get_all_channels(), id=channel_id)
+        if channel is None or not isinstance(channel, discord.VoiceChannel):
+            return f"Voice channel with ID {channel_id} not found."
+
+        try:
+            await channel.delete()
+            return f"Successfully deleted voice channel '{channel.name}'."
+        except discord.HTTPException as e:
+            logging.error(f"Error deleting voice channel: {e}")
+            return f"Error deleting voice channel."
+        
+    @utils.function_info
+    async def create_text_channel(self, guild_id: int, channel_name: str):
+        """Creates a new text channel in the specified guild.
+
+        :param guild_id: The ID of the Discord guild.
+        :type guild_id: integer
+        :param channel_name: The name of the new text channel.
+        :type channel_name: string
+        :return: A message indicating the result of the operation.
+        :rtype: string
+        """
+        guild = discord.utils.get(self.guilds, id=guild_id)
+        if guild is None:
+            return f"Guild with ID {guild_id} not found."
+
+        try:
+            await guild.create_text_channel(channel_name)
+            return f"Successfully created text channel '{channel_name}'."
+        except discord.HTTPException as e:
+            logging.error(f"Error creating text channel: {e}")
+            return f"Error creating text channel."
+        
+    @utils.function_info
+    async def delete_text_channel(self, guild_id: int, channel_id: int):
+        """Deletes the specified text channel.
+
+        :param guild_id: The ID of the Discord guild.
+        :type guild_id: integer
+        :param channel_id: The ID of the text channel to delete.
+        :type channel_id: integer
+        :return: A message indicating the result of the operation.
+        :rtype: string
+        """
+        channel = discord.utils.get(self.get_all_channels(), id=channel_id)
+        if channel is None or not isinstance(channel, discord.TextChannel):
+            return f"Text channel with ID {channel_id} not found."
+
+        try:
+            await channel.delete()
+            return f"Successfully deleted text channel '{channel.name}'."
+        except discord.HTTPException as e:
+            logging.error(f"Error deleting text channel: {e}")
+            return f"Error deleting text channel."
         
     @utils.function_info
     async def get_user_voice_state(self, user_id: int):
