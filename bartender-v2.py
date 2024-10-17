@@ -11,18 +11,28 @@ import datetime
 from discord.ext import commands
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import traceback
+from google.cloud import firestore
+from pydub import AudioSegment
+from typing import List, Tuple
+
 from ylb import config
 from ylb import utils
 from ylb.utils import TextColor
-from ylb import openai_client as client
-from google.cloud import firestore
-
+from ylb.helpers.audio import has_speech
+from ylb.helpers.rswiki import (
+    search_osrs_wiki,
+    search_osrs_item_value,
+    search_rs3_wiki,
+    search_rs3_item_value
+)
 from ylb.helpers.openai import (
     openai_read_file_into_vector_store,
     openai_get_vector_store_file_ids,
     openai_update_assistant_vector_store,
     openai_update_assistant_code_interpreter,
 )
+
+from ylb import openai_client as client
 
 # General program information
 name = "Your Local Bartender"
@@ -311,7 +321,7 @@ class Bartender(commands.Bot):
             except Exception as e:
                 logging.error(f"Error in continuous_listen: {str(e)}")
 
-    async def once_done(self, sink: discord.sinks, channel: discord.TextChannel, *args):
+    async def once_done(self, sink: discord.sinks, channel: discord.TextChannel):
         """
         Processes recorded audio data after a recording session ends.
 
@@ -328,10 +338,15 @@ class Bartender(commands.Bot):
 
         self.transcript_buffer = []
 
+        start_time = time.time()
+
         for user_id, audio in sink.audio_data.items():
             user_nick = await self.get_username_from_id(user_id, channel.guild)
             if user_nick:
                 raw_transcript = await self.transcribe_audio_stream(user_id, audio)
+
+                if not raw_transcript:
+                    continue
 
                 timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 tagged_transcript = f"[{timestamp}] [{user_nick} (id: {user_id})] {raw_transcript}"
@@ -382,11 +397,12 @@ class Bartender(commands.Bot):
                             for message in messages:
                                 if message.role == "assistant":
                                     try:
+                                        assistant_message = message.content[0].text.value
                                         logging.info(
-                                            f"{TextColor.BOLD}{TextColor.GRAY}[{config.OPENAI_ASSISTANT_NAME} 💭] {message.content[0].text.value}{TextColor.ENDC}\n"
+                                            f"{TextColor.BOLD}{TextColor.GRAY}[{config.OPENAI_ASSISTANT_NAME} 💭] {assistant_message}{TextColor.ENDC}\n"
                                         )
                                         if config.ENABLE_THOUGHT_MESSAGES:
-                                            await channel.send(f"💭 {message.content[0].text.value}")
+                                            await channel.send(f"💭 {assistant_message}")
 
                                         # Store the assistant message in the Firestore subcollection
                                         self.session_doc_ref.collection("messages").add(
@@ -420,6 +436,7 @@ class Bartender(commands.Bot):
                         else:
                             pass
                         await asyncio.sleep(0.1)
+            logging.info(f"Processed {len(sink.audio_data)} audio streams in {time.time() - start_time:.2f} seconds")
 
     async def handle_requires_action(self, data, run_id):
         """
@@ -441,9 +458,9 @@ class Bartender(commands.Bot):
                 fargs = tool_call.function.arguments
                 if isinstance(result, Exception):
                     logging.error(
-                        f"Error during tool call {tool_call_id}: {str(result)}\n{traceback.format_exc()}"
+                        f"Error during tool call {tool_call_id}: {str(result)}"
                     )
-                    output = f"Error during tool call: {str(result)}\n{traceback.format_exc()}"
+                    output = f"Error during tool call: {str(result)}"
                 else:
                     output = result
 
@@ -467,7 +484,7 @@ class Bartender(commands.Bot):
                     }
                 )
                 logging.info(
-                    f"Tool call completed -> {TextColor.HEADER}{tool_call.function.name}()"
+                    f"Tool call completed -> {TextColor.HEADER}{tool_call.function.name}(){TextColor.ENDC}"
                 )
         else:
             logging.info("No tool calls found in the required action.")
@@ -493,12 +510,20 @@ class Bartender(commands.Bot):
         for tool in self._tools:
             if tool.info["function"]["name"] == function_name:
                 try:
-                    # Check if the tool function is async
-                    if inspect.iscoroutinefunction(tool.func):
-                        function_response = await tool(self, **arguments)
+                    # Check if the tool function is a member of self
+                    if hasattr(self, tool.func.__name__):
+                        # Check if the tool function is async
+                        if inspect.iscoroutinefunction(tool.func):
+                            function_response = await tool(self, **arguments)
+                        else:
+                            # If sync, call directly
+                            function_response = tool(self, **arguments)
                     else:
-                        # If sync, call directly
-                        function_response = tool(self, **arguments)
+                        # If the function is not a member of self, call without self
+                        if inspect.iscoroutinefunction(tool.func):
+                            function_response = await tool(**arguments)
+                        else:
+                            function_response = tool(**arguments)
                     return str(function_response)
                 except Exception as e:
                     logging.warning(
@@ -558,12 +583,21 @@ class Bartender(commands.Bot):
             str: The transcribed text from the audio stream.
         """
         filename = f"generated_audio/request-{user_id}.wav"
+        
+        # Output the audio data to a WAV file
         with open(filename, "wb") as f:
             f.write(audio.file.getbuffer())
-
+        
+        # Convert the audio file to correct WAV format
         audio_file = open(filename, "rb")
+        sound = AudioSegment.from_file(audio_file)
+        sound.export(filename, format="wav")
+        
+        if not has_speech(filename):
+            return ""
+
         transcript = client.audio.transcriptions.create(
-            model=config.OPENAI_VOICE_MODEL, file=audio_file, response_format="text", prompt=config.PERSONALITY_PROMPT
+            model=config.OPENAI_VOICE_MODEL, file=audio_file, response_format="text"
         )
 
         return str(transcript)
@@ -585,6 +619,7 @@ class Bartender(commands.Bot):
                     model=config.OPENAI_TTS_MODEL,
                     voice=config.OPENAI_TTS_VOICE,
                     input=message,
+                    speed=1.0
                 )
                 # response.stream_to_file(filename)
                 response.write_to_file(filename)
@@ -598,7 +633,7 @@ class Bartender(commands.Bot):
                     audio = discord.FFmpegPCMAudio(
                         executable="ffmpeg",
                         source=filename,
-                        options=f'-af "atempo=1.0" -v "quiet"',
+                        options=f'-af "atempo=1.1" -v "quiet"',
                     )
                 # Play the audio file using FFmpeg
                 self._voice_client.play(audio)
@@ -1117,6 +1152,10 @@ if __name__ == "__main__":
         openai_read_file_into_vector_store,
         openai_update_assistant_code_interpreter,
         openai_update_assistant_vector_store,
+        search_osrs_wiki,
+        search_osrs_item_value,
+        search_rs3_wiki,
+        search_rs3_item_value
     ]
 
     intents = discord.Intents.default()

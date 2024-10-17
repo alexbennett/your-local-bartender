@@ -1,16 +1,16 @@
-enable_thought_messages: false
+enable_thought_messages: true
 discord:
   continuous_listen:
-    activation_phrase: "gwen"
-    recording_duration: 15
+    activation_phrase: "bartender"
+    recording_duration: 10
     pause_duration: 0.1
 openai:
   assistant:
     id: "asst_ZUgOFB1c8RyXse4q888oTo5D"
-    name: "Gwen"
+    name: "Bartender"
   chat: 
-    model: "o1-mini"
-    temperature: 1.0
+    model: "gpt-4o"
+    temperature: 0.7
   voice: 
     model: "whisper-1"
     tts_voice: "nova"
